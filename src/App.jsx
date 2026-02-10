@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
-import { supabase } from './lib/supabase' // Cambio de ruta: antes estaba en la raíz
-import Auth from './components/Auth'     // Cambio de ruta: ahora está en src/components
-import Timer from './components/Timer'   // Cambio de ruta
-import Store from './components/Store'   // Cambio de ruta
+import React, { useState, useEffect } from 'react'
+import { supabase } from './lib/supabase'
+import Auth from './components/Auth'
+import Timer from './components/Timer'
+import Store from './components/Store'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -12,14 +12,14 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Obtener sesión inicial
+    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       if (session) fetchOrCreatePerfil(session.user.id)
       else setLoading(false)
     })
 
-    // Escuchar cambios de autenticación
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       if (session) fetchOrCreatePerfil(session.user.id)
@@ -35,12 +35,14 @@ export default function App() {
 
   const fetchOrCreatePerfil = async (userId) => {
     setLoading(true)
+    // Try to get existing profile
     let { data, error } = await supabase
       .from('perfiles')
       .select('*')
       .eq('user_id', userId)
       .single()
 
+    // If no profile exists, create one
     if (error && error.code === 'PGRST116') {
       const { data: newPerfil, error: insertError } = await supabase
         .from('perfiles')
@@ -80,6 +82,7 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Header */}
       <header className="app-header">
         <div className="header-left">
           <span className="logo-icon">⬡</span>
@@ -112,6 +115,7 @@ export default function App() {
         </div>
       </header>
 
+      {/* Main Content */}
       <main className="app-main">
         {activeTab === 'timer' && (
           <Timer
