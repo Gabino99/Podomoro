@@ -1,6 +1,3 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
+react({
+  jsxRuntime: 'automatic', // ← le dice a Vite que use el nuevo transform
 })
