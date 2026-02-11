@@ -78,7 +78,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Header */}
       <header className="app-header">
         <div className="header-left">
           <span className="logo-icon">⬡</span>
@@ -119,7 +118,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="app-main">
         {activeTab === 'timer' && (
           <Timer
