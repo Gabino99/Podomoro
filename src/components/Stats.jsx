@@ -89,7 +89,7 @@ export default function Stats({ userId }) {
         .from('sesiones')
         .select('*')
         .eq('user_id', userId)
-        .order('creado_en', { ascending: true })
+        .order('created_at', { ascending: true })
 
       if (fetchError) {
         setError(`Error al cargar: ${fetchError.message}`)
@@ -102,7 +102,7 @@ export default function Stats({ userId }) {
       hace30Dias.setDate(hace30Dias.getDate() - 30)
 
       const sesionesFiltradas = (data || []).filter(s => {
-        const fecha = new Date(s.creado_en)
+        const fecha = new Date(s.created_at)
         return (
           s.completada === true &&
           s.tipo === 'trabajo' &&
@@ -120,7 +120,7 @@ export default function Stats({ userId }) {
   const weekData = useMemo(() => {
     const days = getLast7Days()
     return days.map(day => {
-      const daySessions = sesiones.filter(s => s.creado_en.startsWith(day))
+      const daySessions = sesiones.filter(s => s.created_at.startsWith(day))
       const minutos = daySessions.reduce((acc, s) => acc + s.duracion_minutos, 0)
       return {
         dia: formatDay(day),
@@ -137,7 +137,7 @@ export default function Stats({ userId }) {
       hora: `${h + 4}h`, minutos: 0
     }))
     sesiones.forEach(s => {
-      const h = new Date(s.creado_en).getHours()
+      const h = new Date(s.created_at).getHours()
       if (h >= 4 && h < 24) hours[h - 4].minutos += s.duracion_minutos
     })
     return hours
@@ -149,7 +149,7 @@ export default function Stats({ userId }) {
       d.setDate(d.getDate() - (29 - i))
       const day = d.toISOString().split('T')[0]
       const minutos = sesiones
-        .filter(s => s.creado_en.startsWith(day))
+        .filter(s => s.created_at.startsWith(day))
         .reduce((acc, s) => acc + s.duracion_minutos, 0)
       return { dia: `${d.getDate()}/${d.getMonth() + 1}`, minutos }
     })
@@ -158,7 +158,7 @@ export default function Stats({ userId }) {
   const stats = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0]
     const minutosHoy = sesiones
-      .filter(s => s.creado_en.startsWith(hoy))
+      .filter(s => s.created_at.startsWith(hoy))
       .reduce((acc, s) => acc + s.duracion_minutos, 0)
 
     const bestDay = weekData.reduce(
@@ -171,7 +171,7 @@ export default function Stats({ userId }) {
       const d = new Date()
       d.setDate(d.getDate() - i)
       const day = d.toISOString().split('T')[0]
-      if (sesiones.some(s => s.creado_en.startsWith(day))) streak++
+      if (sesiones.some(s => s.created_at.startsWith(day))) streak++
       else if (i > 0) break
     }
 
