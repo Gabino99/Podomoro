@@ -90,7 +90,7 @@ export default function Stats({ userId }) {
 
       const { data, error: fetchError } = await supabase
         .from('sesiones')
-        .select('id, duracion_minutos, tipo, completada, creado_en')
+        .select('*')
         .eq('user_id', userId)
         .gte('creado_en', sinceStr)
         .order('creado_en', { ascending: true })
