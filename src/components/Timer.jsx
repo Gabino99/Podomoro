@@ -12,9 +12,7 @@ export default function Timer({ userId, puntos, setPuntos }) {
   const [isRunning, setIsRunning] = useState(false)
   const [isComplete, setIsComplete] = useState(false)
   const [sessionHistory, setSessionHistory] = useState([])
-  
   const intervalRef = useRef(null)
-  const expectedEndTimeRef = useRef(null)
 
   const totalSeconds = mode === 'work' ? workDuration * 60 : breakDuration * 60
   const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
@@ -57,18 +55,16 @@ export default function Timer({ userId, puntos, setPuntos }) {
     await supabase.from('sesiones').insert({
       user_id: userId,
       duracion_minutos: minutosGanados,
-      tipo: 'trabajo',
+      tipo: mode === 'work' ? 'trabajo' : 'descanso',
       completada: true,
     })
 
     setSessionHistory(prev => [{ minutos: minutosGanados, hora: new Date().toLocaleTimeString() }, ...prev.slice(0, 4)])
     localStorage.removeItem('pomodoro_end_time')
-  }, [puntos, setPuntos, userId])
+  }, [puntos, setPuntos, userId, mode])
 
-  // LÓGICA DEL RELOJ (Resistente a pausas del navegador)
   useEffect(() => {
     if (isRunning) {
-      // Si no tenemos una hora de fin grabada, la creamos
       if (!localStorage.getItem('pomodoro_end_time')) {
         const endTime = Date.now() + (secondsLeft * 1000);
         localStorage.setItem('pomodoro_end_time', endTime.toString());
@@ -93,20 +89,14 @@ export default function Timer({ userId, puntos, setPuntos }) {
       }, 1000);
     }
     return () => clearInterval(intervalRef.current);
-  }, [isRunning, mode, workDuration, acreditarPuntos]);
+  }, [isRunning, mode, workDuration, acreditarPuntos, secondsLeft]);
 
-  const handleStart = () => {
-    if (isComplete) return;
-    setIsRunning(true);
+  const handleStart = () => { if (!isComplete) setIsRunning(true); };
+  const handlePause = () => { 
+    setIsRunning(false); 
+    clearInterval(intervalRef.current); 
+    localStorage.removeItem('pomodoro_end_time'); 
   };
-
-  const handlePause = () => {
-    setIsRunning(false);
-    clearInterval(intervalRef.current);
-    localStorage.removeItem('pomodoro_end_time');
-  };
-
-  const handleCancel = () => resetTimer();
 
   const handleModeChange = (newMode) => {
     setMode(newMode);
@@ -115,55 +105,62 @@ export default function Timer({ userId, puntos, setPuntos }) {
 
   const handleWorkDurationChange = (mins) => {
     setWorkDuration(mins);
-    if (mode === 'work') {
-      setSecondsLeft(mins * 60);
-      setIsRunning(false);
-      setIsComplete(false);
-    }
+    if (mode === 'work') { setSecondsLeft(mins * 60); setIsRunning(false); setIsComplete(false); }
   };
 
   const handleBreakDurationChange = (mins) => {
     setBreakDuration(mins);
-    if (mode === 'break') {
-      setSecondsLeft(mins * 60);
-      setIsRunning(false);
-      setIsComplete(false);
-    }
+    if (mode === 'break') { setSecondsLeft(mins * 60); setIsRunning(false); setIsComplete(false); }
   };
 
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
   const seconds = (secondsLeft % 60).toString().padStart(2, '0');
-
   const radius = 130;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progress / 100) * circumference;
 
   return (
     <div className="timer-container">
+      {/* Botones de Modo */}
       <div className="mode-toggle">
-        <button className={`mode-btn ${mode === 'work' ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
-        <button className={`mode-btn ${mode === 'break' ? 'active' : ''}`} onClick={() => handleModeChange('break')}>Descanso</button>
+        <button 
+          className={`mode-btn ${mode === 'work' ? 'active' : ''}`} 
+          onClick={() => handleModeChange('work')}
+        >
+          Trabajo
+        </button>
+        <button 
+          className={`mode-btn ${mode === 'break' ? 'active' : ''}`} 
+          onClick={() => handleModeChange('break')}
+        >
+          Descanso
+        </button>
       </div>
 
+      {/* Selectores de Tiempo */}
       <div className="duration-selectors">
-        {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
-          <button 
-            key={m} 
-            className={`dur-btn ${(mode === 'work' ? workDuration : breakDuration) === m ? 'active' : ''}`}
-            onClick={() => mode === 'work' ? handleWorkDurationChange(m) : handleBreakDurationChange(m)}
-            disabled={isRunning}
-          >
-            {m}m
-          </button>
-        ))}
+        <div className="selector-group">
+          {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
+            <button 
+              key={m} 
+              className={`dur-btn ${(mode === 'work' ? workDuration : breakDuration) === m ? 'active' : ''}`}
+              onClick={() => mode === 'work' ? handleWorkDurationChange(m) : handleBreakDurationChange(m)}
+              disabled={isRunning}
+            >
+              {m}m
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* Círculo del Temporizador */}
       <div className="timer-circle-wrapper">
         <svg className="timer-svg" viewBox="0 0 300 300">
           <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
           <circle
             className={`circle-progress ${isComplete ? 'complete' : ''}`}
-            cx="150" cy="150" r={radius} fill="none" strokeWidth="6" strokeLinecap="round"
+            cx="150" cy="150" r={radius}
+            fill="none" strokeWidth="6" strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
             transform="rotate(-90 150 150)"
@@ -175,38 +172,43 @@ export default function Timer({ userId, puntos, setPuntos }) {
           ) : (
             <>
               <span className="time-text">{minutes}:{seconds}</span>
-              <span className="time-label">{mode === 'work' ? `+${workDuration} pts al finalizar` : 'Descanso'}</span>
+              <span className="time-label">{mode === 'work' ? `+${workDuration} pts` : 'Descanso'}</span>
             </>
           )}
         </div>
       </div>
 
+      {/* Controles */}
       <div className="timer-controls">
         {!isRunning && !isComplete && (
           <button className="btn-primary large" onClick={handleStart}>
             {secondsLeft < totalSeconds ? 'Reanudar' : 'Iniciar'}
           </button>
         )}
-        {isRunning && <button className="btn-secondary large" onClick={handlePause}>Pausar</button>}
-        {isComplete && <button className="btn-primary large" onClick={() => resetTimer()}>Nueva sesión</button>}
+        {isRunning && (
+          <button className="btn-secondary large" onClick={handlePause}>
+            Pausar
+          </button>
+        )}
+        {isComplete && (
+          <button className="btn-primary large" onClick={() => resetTimer()}>
+            Nueva sesión
+          </button>
+        )}
         {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
-          <button className="btn-ghost" onClick={handleCancel}>Cancelar</button>
+          <button className="btn-ghost" onClick={() => resetTimer()}>
+            Cancelar
+          </button>
         )}
       </div>
 
-      {isComplete && mode === 'work' && (
-        <div className="points-earned">
-          <span className="points-earned-icon">⬡</span>
-          <span>+{workDuration} puntos acreditados</span>
-        </div>
-      )}
-
+      {/* Historial */}
       {sessionHistory.length > 0 && (
         <div className="session-history">
           <p className="history-title">Sesiones de hoy</p>
           {sessionHistory.map((s, i) => (
             <div key={i} className="history-item">
-              <span>✓ {s.minutos} min completados</span>
+              <span>✓ {s.minutos} min trabajo</span>
               <span className="history-time">{s.hora}</span>
             </div>
           ))}
