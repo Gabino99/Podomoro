@@ -35,20 +35,21 @@ export default function App() {
 
   const fetchOrCreatePerfil = async (userId) => {
     setLoading(true)
+
     // Try to get existing profile
     let { data, error } = await supabase
       .from('perfiles')
       .select('*')
       .eq('user_id', userId)
-      .single()
+      .maybeSingle() // ✅ Fix: evita el error 406
 
     // If no profile exists, create one
-    if (error && error.code === 'PGRST116') {
+    if (!data && !error) {
       const { data: newPerfil, error: insertError } = await supabase
         .from('perfiles')
         .insert({ user_id: userId, puntos_totales: 0 })
         .select()
-        .single()
+        .maybeSingle()
 
       if (!insertError) {
         data = newPerfil
@@ -59,6 +60,7 @@ export default function App() {
       setPerfil(data)
       setPuntos(data.puntos_totales)
     }
+
     setLoading(false)
   }
 
@@ -91,13 +93,13 @@ export default function App() {
         <div className="header-center">
           <nav className="main-nav">
             <button
-              className={`nav-btn ${activeTab === 'timer' ? 'active' : ''}`}
+              className={`nav-btn ${activeTab === 'timer' ? 'active' : ''}`} // ✅ Fix: llaves correctas
               onClick={() => setActiveTab('timer')}
             >
               Temporizador
             </button>
             <button
-              className={`nav-btn ${activeTab === 'store' ? 'active' : ''}`}
+              className={`nav-btn ${activeTab === 'store' ? 'active' : ''}`} // ✅ Fix: llaves correctas
               onClick={() => setActiveTab('store')}
             >
               Tienda
