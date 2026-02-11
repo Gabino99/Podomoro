@@ -14,10 +14,12 @@ export default function Timer({ userId, puntos, setPuntos }) {
   const [sessionHistory, setSessionHistory] = useState([])
   
   const intervalRef = useRef(null)
+  const expectedEndTimeRef = useRef(null)
 
   const totalSeconds = mode === 'work' ? workDuration * 60 : breakDuration * 60
   const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
 
+  // EFECTO LÁZARO: Recupera el tiempo si refrescas o cambias de pestaña
   useEffect(() => {
     const savedEndTime = localStorage.getItem('pomodoro_end_time');
     const savedMode = localStorage.getItem('pomodoro_mode');
@@ -55,16 +57,18 @@ export default function Timer({ userId, puntos, setPuntos }) {
     await supabase.from('sesiones').insert({
       user_id: userId,
       duracion_minutos: minutosGanados,
-      tipo: mode === 'work' ? 'trabajo' : 'descanso',
+      tipo: 'trabajo',
       completada: true,
     })
 
     setSessionHistory(prev => [{ minutos: minutosGanados, hora: new Date().toLocaleTimeString() }, ...prev.slice(0, 4)])
     localStorage.removeItem('pomodoro_end_time')
-  }, [puntos, setPuntos, userId, mode])
+  }, [puntos, setPuntos, userId])
 
+  // LÓGICA DEL RELOJ (Resistente a pausas del navegador)
   useEffect(() => {
     if (isRunning) {
+      // Si no tenemos una hora de fin grabada, la creamos
       if (!localStorage.getItem('pomodoro_end_time')) {
         const endTime = Date.now() + (secondsLeft * 1000);
         localStorage.setItem('pomodoro_end_time', endTime.toString());
@@ -91,55 +95,61 @@ export default function Timer({ userId, puntos, setPuntos }) {
     return () => clearInterval(intervalRef.current);
   }, [isRunning, mode, workDuration, acreditarPuntos]);
 
-  const handleStart = () => { if (!isComplete) setIsRunning(true); };
-  const handlePause = () => { setIsRunning(false); clearInterval(intervalRef.current); localStorage.removeItem('pomodoro_end_time'); };
+  const handleStart = () => {
+    if (isComplete) return;
+    setIsRunning(true);
+  };
+
+  const handlePause = () => {
+    setIsRunning(false);
+    clearInterval(intervalRef.current);
+    localStorage.removeItem('pomodoro_end_time');
+  };
+
   const handleCancel = () => resetTimer();
-  const handleModeChange = (newMode) => { setMode(newMode); resetTimer(newMode); };
+
+  const handleModeChange = (newMode) => {
+    setMode(newMode);
+    resetTimer(newMode);
+  };
 
   const handleWorkDurationChange = (mins) => {
     setWorkDuration(mins);
-    if (mode === 'work') { setSecondsLeft(mins * 60); setIsRunning(false); setIsComplete(false); }
+    if (mode === 'work') {
+      setSecondsLeft(mins * 60);
+      setIsRunning(false);
+      setIsComplete(false);
+    }
   };
 
   const handleBreakDurationChange = (mins) => {
     setBreakDuration(mins);
-    if (mode === 'break') { setSecondsLeft(mins * 60); setIsRunning(false); setIsComplete(false); }
+    if (mode === 'break') {
+      setSecondsLeft(mins * 60);
+      setIsRunning(false);
+      setIsComplete(false);
+    }
   };
 
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
   const seconds = (secondsLeft % 60).toString().padStart(2, '0');
+
   const radius = 130;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progress / 100) * circumference;
 
   return (
-    <div className="flex flex-col items-center w-full max-w-md mx-auto p-4">
-      {/* Selectores de Modo */}
-      <div className="flex justify-center gap-4 mb-8 w-full">
-        <button 
-          className={`px-6 py-2 rounded-full font-medium transition-all ${mode === 'work' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
-          onClick={() => handleModeChange('work')}
-        >
-          Trabajo
-        </button>
-        <button 
-          className={`px-6 py-2 rounded-full font-medium transition-all ${mode === 'break' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
-          onClick={() => handleModeChange('break')}
-        >
-          Descanso
-        </button>
+    <div className="timer-container">
+      <div className="mode-toggle">
+        <button className={`mode-btn ${mode === 'work' ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
+        <button className={`mode-btn ${mode === 'break' ? 'active' : ''}`} onClick={() => handleModeChange('break')}>Descanso</button>
       </div>
 
-      {/* Selectores de Tiempo */}
-      <div className="flex justify-center flex-wrap gap-2 mb-10 w-full">
+      <div className="duration-selectors">
         {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
           <button 
             key={m} 
-            className={`w-14 h-10 rounded-xl border transition-all ${
-              (mode === 'work' ? workDuration : breakDuration) === m 
-              ? 'border-orange-500 bg-orange-500/10 text-orange-500' 
-              : 'border-slate-800 text-slate-500 hover:border-slate-700'
-            }`}
+            className={`dur-btn ${(mode === 'work' ? workDuration : breakDuration) === m ? 'active' : ''}`}
             onClick={() => mode === 'work' ? handleWorkDurationChange(m) : handleBreakDurationChange(m)}
             disabled={isRunning}
           >
@@ -148,62 +158,56 @@ export default function Timer({ userId, puntos, setPuntos }) {
         ))}
       </div>
 
-      {/* Círculo del Timer */}
-      <div className="relative flex items-center justify-center mb-10">
-        <svg className="w-64 h-64 transform -rotate-90">
-          <circle cx="128" cy="128" r={radius - 10} fill="none" stroke="#1e293b" strokeWidth="6" />
+      <div className="timer-circle-wrapper">
+        <svg className="timer-svg" viewBox="0 0 300 300">
+          <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
           <circle
-            cx="128" cy="128" r={radius - 10} fill="none" stroke={mode === 'work' ? '#ea580c' : '#2563eb'}
-            strokeWidth="6" strokeLinecap="round" strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset} className="transition-all duration-1000"
+            className={`circle-progress ${isComplete ? 'complete' : ''}`}
+            cx="150" cy="150" r={radius} fill="none" strokeWidth="6" strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            transform="rotate(-90 150 150)"
           />
         </svg>
-        <div className="absolute flex flex-col items-center">
+        <div className="timer-display">
           {isComplete ? (
-            <span className="text-5xl text-green-500">✓</span>
+            <div className="complete-badge">✓</div>
           ) : (
             <>
-              <span className="text-5xl font-bold text-white tracking-tighter">{minutes}:{seconds}</span>
-              <span className="text-xs text-slate-500 mt-2 uppercase tracking-widest">
-                {mode === 'work' ? `+${workDuration} pts` : 'Relax'}
-              </span>
+              <span className="time-text">{minutes}:{seconds}</span>
+              <span className="time-label">{mode === 'work' ? `+${workDuration} pts al finalizar` : 'Descanso'}</span>
             </>
           )}
         </div>
       </div>
 
-      {/* Controles */}
-      <div className="flex flex-col gap-3 w-full px-8">
+      <div className="timer-controls">
         {!isRunning && !isComplete && (
-          <button className="bg-white text-black py-4 rounded-2xl font-bold text-lg hover:bg-slate-200" onClick={handleStart}>
-            {secondsLeft < totalSeconds ? 'REANUDAR' : 'INICIAR'}
+          <button className="btn-primary large" onClick={handleStart}>
+            {secondsLeft < totalSeconds ? 'Reanudar' : 'Iniciar'}
           </button>
         )}
-        {isRunning && (
-          <button className="bg-slate-800 text-white py-4 rounded-2xl font-bold text-lg" onClick={handlePause}>
-            PAUSAR
-          </button>
-        )}
-        {isComplete && (
-          <button className="bg-orange-600 text-white py-4 rounded-2xl font-bold text-lg" onClick={() => resetTimer()}>
-            NUEVA SESIÓN
-          </button>
-        )}
+        {isRunning && <button className="btn-secondary large" onClick={handlePause}>Pausar</button>}
+        {isComplete && <button className="btn-primary large" onClick={() => resetTimer()}>Nueva sesión</button>}
         {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
-          <button className="text-slate-500 py-2 hover:text-white text-sm font-medium" onClick={handleCancel}>
-            CANCELAR
-          </button>
+          <button className="btn-ghost" onClick={handleCancel}>Cancelar</button>
         )}
       </div>
 
-      {/* Historial */}
+      {isComplete && mode === 'work' && (
+        <div className="points-earned">
+          <span className="points-earned-icon">⬡</span>
+          <span>+{workDuration} puntos acreditados</span>
+        </div>
+      )}
+
       {sessionHistory.length > 0 && (
-        <div className="mt-12 w-full border-t border-slate-900 pt-6">
-          <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-4">Sesiones de hoy</p>
+        <div className="session-history">
+          <p className="history-title">Sesiones de hoy</p>
           {sessionHistory.map((s, i) => (
-            <div key={i} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg mb-2 text-sm">
-              <span className="text-slate-300">✓ {s.minutos} min trabajo</span>
-              <span className="text-slate-600">{s.hora}</span>
+            <div key={i} className="history-item">
+              <span>✓ {s.minutos} min completados</span>
+              <span className="history-time">{s.hora}</span>
             </div>
           ))}
         </div>
