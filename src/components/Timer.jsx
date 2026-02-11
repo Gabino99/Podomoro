@@ -14,7 +14,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
   const [sessionHistory, setSessionHistory] = useState([])
   
   const intervalRef = useRef(null)
-  const expectedEndTimeRef = useRef(null)
 
   const totalSeconds = mode === 'work' ? workDuration * 60 : breakDuration * 60
   const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
@@ -57,18 +56,16 @@ export default function Timer({ userId, puntos, setPuntos }) {
     await supabase.from('sesiones').insert({
       user_id: userId,
       duracion_minutos: minutosGanados,
-      tipo: 'trabajo',
+      tipo: mode === 'work' ? 'trabajo' : 'descanso',
       completada: true,
     })
 
     setSessionHistory(prev => [{ minutos: minutosGanados, hora: new Date().toLocaleTimeString() }, ...prev.slice(0, 4)])
     localStorage.removeItem('pomodoro_end_time')
-  }, [puntos, setPuntos, userId])
+  }, [puntos, setPuntos, userId, mode])
 
-  // LÓGICA DEL RELOJ (Resistente a pausas del navegador)
   useEffect(() => {
     if (isRunning) {
-      // Si no tenemos una hora de fin grabada, la creamos
       if (!localStorage.getItem('pomodoro_end_time')) {
         const endTime = Date.now() + (secondsLeft * 1000);
         localStorage.setItem('pomodoro_end_time', endTime.toString());
@@ -95,61 +92,55 @@ export default function Timer({ userId, puntos, setPuntos }) {
     return () => clearInterval(intervalRef.current);
   }, [isRunning, mode, workDuration, acreditarPuntos]);
 
-  const handleStart = () => {
-    if (isComplete) return;
-    setIsRunning(true);
-  };
-
-  const handlePause = () => {
-    setIsRunning(false);
-    clearInterval(intervalRef.current);
-    localStorage.removeItem('pomodoro_end_time');
-  };
-
+  const handleStart = () => { if (!isComplete) setIsRunning(true); };
+  const handlePause = () => { setIsRunning(false); clearInterval(intervalRef.current); localStorage.removeItem('pomodoro_end_time'); };
   const handleCancel = () => resetTimer();
-
-  const handleModeChange = (newMode) => {
-    setMode(newMode);
-    resetTimer(newMode);
-  };
+  const handleModeChange = (newMode) => { setMode(newMode); resetTimer(newMode); };
 
   const handleWorkDurationChange = (mins) => {
     setWorkDuration(mins);
-    if (mode === 'work') {
-      setSecondsLeft(mins * 60);
-      setIsRunning(false);
-      setIsComplete(false);
-    }
+    if (mode === 'work') { setSecondsLeft(mins * 60); setIsRunning(false); setIsComplete(false); }
   };
 
   const handleBreakDurationChange = (mins) => {
     setBreakDuration(mins);
-    if (mode === 'break') {
-      setSecondsLeft(mins * 60);
-      setIsRunning(false);
-      setIsComplete(false);
-    }
+    if (mode === 'break') { setSecondsLeft(mins * 60); setIsRunning(false); setIsComplete(false); }
   };
 
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
   const seconds = (secondsLeft % 60).toString().padStart(2, '0');
-
   const radius = 130;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progress / 100) * circumference;
 
   return (
-    <div className="timer-container">
-      <div className="mode-toggle">
-        <button className={`mode-btn ${mode === 'work' ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
-        <button className={`mode-btn ${mode === 'break' ? 'active' : ''}`} onClick={() => handleModeChange('break')}>Descanso</button>
+    <div className="flex flex-col items-center w-full max-w-md mx-auto p-4">
+      {/* Selectores de Modo Centrados */}
+      <div className="flex justify-center gap-4 mb-8 w-full">
+        <button 
+          className={`px-6 py-2 rounded-full font-medium transition-all ${mode === 'work' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
+          onClick={() => handleModeChange('work')}
+        >
+          Trabajo
+        </button>
+        <button 
+          className={`px-6 py-2 rounded-full font-medium transition-all ${mode === 'break' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
+          onClick={() => handleModeChange('break')}
+        >
+          Descanso
+        </button>
       </div>
 
-      <div className="duration-selectors">
+      {/* Selectores de Tiempo Centrados */}
+      <div className="flex justify-center flex-wrap gap-2 mb-10 w-full">
         {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
           <button 
             key={m} 
-            className={`dur-btn ${(mode === 'work' ? workDuration : breakDuration) === m ? 'active' : ''}`}
+            className={`w-14 h-10 rounded-xl border transition-all ${
+              (mode === 'work' ? workDuration : breakDuration) === m 
+              ? 'border-orange-500 bg-orange-500/10 text-orange-500' 
+              : 'border-slate-800 text-slate-500 hover:border-slate-700'
+            }`}
             onClick={() => mode === 'work' ? handleWorkDurationChange(m) : handleBreakDurationChange(m)}
             disabled={isRunning}
           >
@@ -158,60 +149,35 @@ export default function Timer({ userId, puntos, setPuntos }) {
         ))}
       </div>
 
-      <div className="timer-circle-wrapper">
-        <svg className="timer-svg" viewBox="0 0 300 300">
-          <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
+      {/* Círculo del Timer */}
+      <div className="relative flex items-center justify-center mb-10">
+        <svg className="w-64 h-64 transform -rotate-90">
+          <circle cx="128" cy="128" r={radius - 10} fill="none" stroke="#1e293b" strokeWidth="6" />
           <circle
-            className={`circle-progress ${isComplete ? 'complete' : ''}`}
-            cx="150" cy="150" r={radius} fill="none" strokeWidth="6" strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
-            transform="rotate(-90 150 150)"
+            cx="128" cy="128" r={radius - 10} fill="none" stroke={mode === 'work' ? '#ea580c' : '#2563eb'}
+            strokeWidth="6" strokeLinecap="round" strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset} className="transition-all duration-1000"
           />
         </svg>
-        <div className="timer-display">
+        <div className="absolute flex flex-col items-center">
           {isComplete ? (
-            <div className="complete-badge">✓</div>
+            <span className="text-5xl text-green-500">✓</span>
           ) : (
             <>
-              <span className="time-text">{minutes}:{seconds}</span>
-              <span className="time-label">{mode === 'work' ? `+${workDuration} pts al finalizar` : 'Descanso'}</span>
+              <span className="text-5xl font-bold text-white tracking-tighter">{minutes}:{seconds}</span>
+              <span className="text-xs text-slate-500 mt-2 uppercase tracking-widest">
+                {mode === 'work' ? `+${workDuration} pts` : 'Relax'}
+              </span>
             </>
           )}
         </div>
       </div>
 
-      <div className="timer-controls">
+      {/* Controles */}
+      <div className="flex flex-col gap-3 w-full px-8">
         {!isRunning && !isComplete && (
-          <button className="btn-primary large" onClick={handleStart}>
-            {secondsLeft < totalSeconds ? 'Reanudar' : 'Iniciar'}
+          <button className="bg-white text-black py-4 rounded-2xl font-bold text-lg hover:bg-slate-200 transition-colors" onClick={handleStart}>
+            {secondsLeft < totalSeconds ? 'REANUDAR' : 'INICIAR'}
           </button>
         )}
-        {isRunning && <button className="btn-secondary large" onClick={handlePause}>Pausar</button>}
-        {isComplete && <button className="btn-primary large" onClick={() => resetTimer()}>Nueva sesión</button>}
-        {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
-          <button className="btn-ghost" onClick={handleCancel}>Cancelar</button>
-        )}
-      </div>
-
-      {isComplete && mode === 'work' && (
-        <div className="points-earned">
-          <span className="points-earned-icon">⬡</span>
-          <span>+{workDuration} puntos acreditados</span>
-        </div>
-      )}
-
-      {sessionHistory.length > 0 && (
-        <div className="session-history">
-          <p className="history-title">Sesiones de hoy</p>
-          {sessionHistory.map((s, i) => (
-            <div key={i} className="history-item">
-              <span>✓ {s.minutos} min completados</span>
-              <span className="history-time">{s.hora}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+        {isRunning && (
