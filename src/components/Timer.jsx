@@ -18,7 +18,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
   const totalSeconds = mode === 'work' ? workDuration * 60 : breakDuration * 60
   const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
 
-  // EFECTO LÁZARO: Recupera el tiempo si refrescas o cambias de pestaña
   useEffect(() => {
     const savedEndTime = localStorage.getItem('pomodoro_end_time');
     const savedMode = localStorage.getItem('pomodoro_mode');
@@ -115,7 +114,7 @@ export default function Timer({ userId, puntos, setPuntos }) {
 
   return (
     <div className="flex flex-col items-center w-full max-w-md mx-auto p-4">
-      {/* Selectores de Modo Centrados */}
+      {/* Selectores de Modo */}
       <div className="flex justify-center gap-4 mb-8 w-full">
         <button 
           className={`px-6 py-2 rounded-full font-medium transition-all ${mode === 'work' ? 'bg-orange-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
@@ -131,7 +130,7 @@ export default function Timer({ userId, puntos, setPuntos }) {
         </button>
       </div>
 
-      {/* Selectores de Tiempo Centrados */}
+      {/* Selectores de Tiempo */}
       <div className="flex justify-center flex-wrap gap-2 mb-10 w-full">
         {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
           <button 
@@ -176,8 +175,39 @@ export default function Timer({ userId, puntos, setPuntos }) {
       {/* Controles */}
       <div className="flex flex-col gap-3 w-full px-8">
         {!isRunning && !isComplete && (
-          <button className="bg-white text-black py-4 rounded-2xl font-bold text-lg hover:bg-slate-200 transition-colors" onClick={handleStart}>
+          <button className="bg-white text-black py-4 rounded-2xl font-bold text-lg hover:bg-slate-200" onClick={handleStart}>
             {secondsLeft < totalSeconds ? 'REANUDAR' : 'INICIAR'}
           </button>
         )}
         {isRunning && (
+          <button className="bg-slate-800 text-white py-4 rounded-2xl font-bold text-lg" onClick={handlePause}>
+            PAUSAR
+          </button>
+        )}
+        {isComplete && (
+          <button className="bg-orange-600 text-white py-4 rounded-2xl font-bold text-lg" onClick={() => resetTimer()}>
+            NUEVA SESIÓN
+          </button>
+        )}
+        {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
+          <button className="text-slate-500 py-2 hover:text-white text-sm font-medium" onClick={handleCancel}>
+            CANCELAR
+          </button>
+        )}
+      </div>
+
+      {/* Historial */}
+      {sessionHistory.length > 0 && (
+        <div className="mt-12 w-full border-t border-slate-900 pt-6">
+          <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-4">Sesiones de hoy</p>
+          {sessionHistory.map((s, i) => (
+            <div key={i} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg mb-2 text-sm">
+              <span className="text-slate-300">✓ {s.minutos} min trabajo</span>
+              <span className="text-slate-600">{s.hora}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
