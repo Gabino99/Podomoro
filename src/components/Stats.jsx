@@ -84,15 +84,11 @@ export default function Stats({ userId }) {
       setLoading(true)
       setError(null)
 
-      const since = new Date()
-      since.setDate(since.getDate() - 30)
-      const sinceStr = since.toISOString()
-
+      // Consulta simple sin filtros extra — todo el filtrado se hace abajo en el cliente
       const { data, error: fetchError } = await supabase
         .from('sesiones')
         .select('*')
         .eq('user_id', userId)
-        .gte('creado_en', sinceStr)
         .order('creado_en', { ascending: true })
 
       if (fetchError) {
@@ -101,10 +97,18 @@ export default function Stats({ userId }) {
         return
       }
 
-      // Filtrar en el cliente para evitar problemas con filtros booleanos
-      const sesionesFiltradas = (data || []).filter(
-        s => s.completada === true && s.tipo === 'trabajo'
-      )
+      // Filtrar últimos 30 días, solo trabajo completado
+      const hace30Dias = new Date()
+      hace30Dias.setDate(hace30Dias.getDate() - 30)
+
+      const sesionesFiltradas = (data || []).filter(s => {
+        const fecha = new Date(s.creado_en)
+        return (
+          s.completada === true &&
+          s.tipo === 'trabajo' &&
+          fecha >= hace30Dias
+        )
+      })
 
       setSesiones(sesionesFiltradas)
       setLoading(false)
@@ -134,7 +138,7 @@ export default function Stats({ userId }) {
     }))
     sesiones.forEach(s => {
       const h = new Date(s.creado_en).getHours()
-      if (h >= 4) hours[h - 4].minutos += s.duracion_minutos
+      if (h >= 4 && h < 24) hours[h - 4].minutos += s.duracion_minutos
     })
     return hours
   }, [sesiones])
