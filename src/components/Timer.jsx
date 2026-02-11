@@ -5,7 +5,7 @@ const WORK_SESSIONS = [20, 25, 30, 45, 60]
 const BREAK_SESSIONS = [5, 10]
 
 export default function Timer({ userId, puntos, setPuntos }) {
-  const [mode, setMode] = useState('work')
+  const [mode, setMode] = useState('work') 
   const [workDuration, setWorkDuration] = useState(25)
   const [breakDuration, setBreakDuration] = useState(5)
   const [secondsLeft, setSecondsLeft] = useState(25 * 60)
@@ -14,13 +14,31 @@ export default function Timer({ userId, puntos, setPuntos }) {
   const [sessionHistory, setSessionHistory] = useState([])
   
   const intervalRef = useRef(null)
-  const expectedEndTimeRef = useRef(null) // NUEVO: Para guardar la hora exacta de fin
+  const expectedEndTimeRef = useRef(null)
 
   const totalSeconds = mode === 'work' ? workDuration * 60 : breakDuration * 60
   const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
 
+  // EFECTO LÁZARO: Recupera el tiempo si refrescas o cambias de pestaña
+  useEffect(() => {
+    const savedEndTime = localStorage.getItem('pomodoro_end_time');
+    const savedMode = localStorage.getItem('pomodoro_mode');
+    
+    if (savedEndTime && savedMode) {
+      const remaining = Math.round((parseInt(savedEndTime) - Date.now()) / 1000);
+      if (remaining > 0) {
+        setMode(savedMode);
+        setSecondsLeft(remaining);
+        setIsRunning(true);
+      } else {
+        localStorage.removeItem('pomodoro_end_time');
+      }
+    }
+  }, []);
+
   const resetTimer = useCallback((newMode = mode, newWork = workDuration, newBreak = breakDuration) => {
     clearInterval(intervalRef.current)
+    localStorage.removeItem('pomodoro_end_time')
     setIsRunning(false)
     setIsComplete(false)
     const duration = newMode === 'work' ? newWork * 60 : newBreak * 60
@@ -31,13 +49,11 @@ export default function Timer({ userId, puntos, setPuntos }) {
     const nuevosPuntos = puntos + minutosGanados
     setPuntos(nuevosPuntos)
     
-    // Actualizar perfil
     await supabase
       .from('perfiles')
       .update({ puntos_totales: nuevosPuntos })
       .eq('user_id', userId)
 
-    // Registrar sesión
     await supabase.from('sesiones').insert({
       user_id: userId,
       duracion_minutos: minutosGanados,
@@ -46,17 +62,23 @@ export default function Timer({ userId, puntos, setPuntos }) {
     })
 
     setSessionHistory(prev => [{ minutos: minutosGanados, hora: new Date().toLocaleTimeString() }, ...prev.slice(0, 4)])
+    localStorage.removeItem('pomodoro_end_time')
   }, [puntos, setPuntos, userId])
 
-  // Lógica mejorada del Temporizador
+  // LÓGICA DEL RELOJ (Resistente a pausas del navegador)
   useEffect(() => {
     if (isRunning) {
-      // Calculamos cuándo debería terminar la sesión basado en el reloj real
-      expectedEndTimeRef.current = Date.now() + (secondsLeft * 1000);
+      // Si no tenemos una hora de fin grabada, la creamos
+      if (!localStorage.getItem('pomodoro_end_time')) {
+        const endTime = Date.now() + (secondsLeft * 1000);
+        localStorage.setItem('pomodoro_end_time', endTime.toString());
+        localStorage.setItem('pomodoro_mode', mode);
+      }
 
       intervalRef.current = setInterval(() => {
+        const endTime = parseInt(localStorage.getItem('pomodoro_end_time'));
         const now = Date.now();
-        const remaining = Math.round((expectedEndTimeRef.current - now) / 1000);
+        const remaining = Math.round((endTime - now) / 1000);
 
         if (remaining <= 0) {
           clearInterval(intervalRef.current);
@@ -64,6 +86,7 @@ export default function Timer({ userId, puntos, setPuntos }) {
           setIsRunning(false);
           setIsComplete(true);
           if (mode === 'work') acreditarPuntos(workDuration);
+          localStorage.removeItem('pomodoro_end_time');
         } else {
           setSecondsLeft(remaining);
         }
@@ -72,7 +95,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
     return () => clearInterval(intervalRef.current);
   }, [isRunning, mode, workDuration, acreditarPuntos]);
 
-  // Funciones de control
   const handleStart = () => {
     if (isComplete) return;
     setIsRunning(true);
@@ -81,6 +103,7 @@ export default function Timer({ userId, puntos, setPuntos }) {
   const handlePause = () => {
     setIsRunning(false);
     clearInterval(intervalRef.current);
+    localStorage.removeItem('pomodoro_end_time');
   };
 
   const handleCancel = () => resetTimer();
@@ -90,8 +113,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
     resetTimer(newMode);
   };
 
-  // ... (El resto de tus funciones de cambio de duración y el renderizado se mantienen igual)
-  
   const handleWorkDurationChange = (mins) => {
     setWorkDuration(mins);
     if (mode === 'work') {
@@ -119,13 +140,11 @@ export default function Timer({ userId, puntos, setPuntos }) {
 
   return (
     <div className="timer-container">
-      {/* Mode Toggle */}
       <div className="mode-toggle">
         <button className={`mode-btn ${mode === 'work' ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
         <button className={`mode-btn ${mode === 'break' ? 'active' : ''}`} onClick={() => handleModeChange('break')}>Descanso</button>
       </div>
 
-      {/* Duration Selectors */}
       <div className="duration-selectors">
         {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
           <button 
@@ -139,7 +158,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
         ))}
       </div>
 
-      {/* Timer Circle */}
       <div className="timer-circle-wrapper">
         <svg className="timer-svg" viewBox="0 0 300 300">
           <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
@@ -163,7 +181,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
         </div>
       </div>
 
-      {/* Controls */}
       <div className="timer-controls">
         {!isRunning && !isComplete && (
           <button className="btn-primary large" onClick={handleStart}>
@@ -177,7 +194,6 @@ export default function Timer({ userId, puntos, setPuntos }) {
         )}
       </div>
 
-      {/* Points History */}
       {isComplete && mode === 'work' && (
         <div className="points-earned">
           <span className="points-earned-icon">⬡</span>
