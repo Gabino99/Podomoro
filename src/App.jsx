@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from './lib/supabase'
 import Auth from './components/Auth'
 import Timer from './components/Timer'
@@ -6,11 +6,23 @@ import Store from './components/Store'
 import Stats from './components/Stats'
 
 export default function App() {
-  const [session, setSession] = useState(null)
-  const [perfil, setPerfil] = useState(null)
-  const [puntos, setPuntos] = useState(0)
+  const [session,  setSession]  = useState(null)
+  const [perfil,   setPerfil]   = useState(null)
+  const [puntos,   setPuntos]   = useState(0)
   const [activeTab, setActiveTab] = useState('timer')
-  const [loading, setLoading] = useState(true)
+  const [loading,  setLoading]  = useState(true)
+  const [pointsAnim, setPointsAnim] = useState(false)
+  const prevPuntosRef = useRef(0)
+
+  // Animar badge cuando suben puntos
+  useEffect(() => {
+    if (puntos > prevPuntosRef.current) {
+      setPointsAnim(true)
+      const t = setTimeout(() => setPointsAnim(false), 600)
+      return () => clearTimeout(t)
+    }
+    prevPuntosRef.current = puntos
+  }, [puntos])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -43,17 +55,16 @@ export default function App() {
     if (!data && !error) {
       const { data: newPerfil, error: insertError } = await supabase
         .from('perfiles')
-        .insert({ user_id: userId, puntos_totales: 0 })
+        .insert({ user_id: userId, puntos_totales: 0, meta_diaria_minutos: 120 })
         .select()
         .maybeSingle()
-      if (!insertError) {
-        data = newPerfil
-      }
+      if (!insertError) data = newPerfil
     }
 
     if (data) {
       setPerfil(data)
       setPuntos(data.puntos_totales)
+      prevPuntosRef.current = data.puntos_totales
     }
     setLoading(false)
   }
@@ -72,9 +83,7 @@ export default function App() {
     )
   }
 
-  if (!session) {
-    return <Auth />
-  }
+  if (!session) return <Auth />
 
   return (
     <div className="app">
@@ -86,35 +95,28 @@ export default function App() {
 
         <div className="header-center">
           <nav className="main-nav">
-            <button
-              className={`nav-btn ${activeTab === 'timer' ? 'active' : ''}`}
-              onClick={() => setActiveTab('timer')}
-            >
-              Temporizador
-            </button>
-            <button
-              className={`nav-btn ${activeTab === 'store' ? 'active' : ''}`}
-              onClick={() => setActiveTab('store')}
-            >
-              Tienda
-            </button>
-            <button
-              className={`nav-btn ${activeTab === 'stats' ? 'active' : ''}`}
-              onClick={() => setActiveTab('stats')}
-            >
-              Estadísticas
-            </button>
+            {[
+              { id: 'timer', label: 'Temporizador' },
+              { id: 'store', label: 'Tienda'       },
+              { id: 'stats', label: 'Estadísticas' },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                className={`nav-btn ${activeTab === id ? 'active' : ''}`}
+                onClick={() => setActiveTab(id)}
+              >
+                {label}
+              </button>
+            ))}
           </nav>
         </div>
 
         <div className="header-right">
-          <div className="points-badge">
+          <div className={`points-badge ${pointsAnim ? 'points-pop' : ''}`}>
             <span className="points-icon">⬡</span>
             <span className="points-value">{puntos}</span>
           </div>
-          <button className="logout-btn" onClick={handleLogout} title="Cerrar sesión">
-            ↩
-          </button>
+          <button className="logout-btn" onClick={handleLogout} title="Cerrar sesión">↩</button>
         </div>
       </header>
 
@@ -124,14 +126,15 @@ export default function App() {
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
+            metaDiaria={perfil?.meta_diaria_minutos ?? 120}
+            onUpdateMeta={async (mins) => {
+              setPerfil(p => ({ ...p, meta_diaria_minutos: mins }))
+              await supabase.from('perfiles').update({ meta_diaria_minutos: mins }).eq('user_id', session.user.id)
+            }}
           />
         )}
         {activeTab === 'store' && (
-          <Store
-            userId={session.user.id}
-            puntos={puntos}
-            setPuntos={setPuntos}
-          />
+          <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} />
         )}
         {activeTab === 'stats' && (
           <Stats userId={session.user.id} />
