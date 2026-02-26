@@ -1,69 +1,208 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { PREMIOS, WORK_SESSIONS, BREAK_SESSIONS, CATEGORIAS, MAX_HISTORY } from '../lib/constants'
+import { playWorkComplete, playBreakComplete } from '../lib/sounds'
 
-const WORK_SESSIONS = [20, 25, 30, 45, 60]
-const BREAK_SESSIONS = [5, 10]
-const MAX_HISTORY = 5
+// ─── Helpers ─────────────────────────────────────────────
+function getNextPrize(puntos) {
+  const sorted = [...PREMIOS].sort((a, b) => a.costo - b.costo)
+  return sorted.find(p => p.costo > puntos) || null
+}
 
-export default function Timer({ userId, puntos, setPuntos }) {
-  const [mode, setMode] = useState('work')
-  const [workDuration, setWorkDuration] = useState(25)
+function getTodayKey() {
+  return new Date().toISOString().split('T')[0]
+}
+
+// ─── Subcomponentes ───────────────────────────────────────
+function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(meta)
+  const pct = Math.min((minutosHoy / meta) * 100, 100)
+  const done = pct >= 100
+
+  const save = () => {
+    const val = Math.max(10, Math.min(480, parseInt(draft) || meta))
+    onChangeMeta(val)
+    setEditing(false)
+  }
+
+  return (
+    <div className="daily-goal-bar">
+      <div className="daily-goal-header">
+        <span className="daily-goal-label">
+          {done ? '✅' : '🎯'} Meta diaria
+        </span>
+        <div className="daily-goal-right">
+          {editing ? (
+            <div className="daily-goal-edit">
+              <input
+                type="number"
+                min="10" max="480"
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && save()}
+                autoFocus
+              />
+              <button className="btn-ghost small" onClick={save}>✓</button>
+            </div>
+          ) : (
+            <>
+              <span className="daily-goal-value">{minutosHoy} / {meta} min</span>
+              <button className="btn-ghost small" onClick={() => { setDraft(meta); setEditing(true) }} title="Cambiar meta">✎</button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="daily-goal-track">
+        <div
+          className={`daily-goal-fill ${done ? 'done' : ''}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function NextPrizeBanner({ puntos }) {
+  const next = getNextPrize(puntos)
+  if (!next) return (
+    <div className="next-prize-banner all-unlocked">
+      🏆 ¡Tenés puntos para todo!
+    </div>
+  )
+  const falta = next.costo - puntos
+  const pct   = Math.min((puntos / next.costo) * 100, 100)
+  return (
+    <div className="next-prize-banner">
+      <div className="next-prize-info">
+        <span>{next.emoji} {next.nombre}</span>
+        <span className="next-prize-falta">faltan {falta} pts</span>
+      </div>
+      <div className="next-prize-track">
+        <div className="next-prize-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function StreakBadge({ streak }) {
+  if (streak < 2) return null
+  return (
+    <div className="streak-badge" title={`${streak} días consecutivos`}>
+      🔥 {streak} días
+    </div>
+  )
+}
+
+// ─── Componente principal ─────────────────────────────────
+export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateMeta }) {
+  const [mode,          setMode]          = useState('work')
+  const [workDuration,  setWorkDuration]  = useState(25)
   const [breakDuration, setBreakDuration] = useState(5)
-  const [secondsLeft, setSecondsLeft] = useState(25 * 60)
-  const [isRunning, setIsRunning] = useState(false)
-  const [isComplete, setIsComplete] = useState(false)
+  const [secondsLeft,   setSecondsLeft]   = useState(25 * 60)
+  const [isRunning,     setIsRunning]     = useState(false)
+  const [isComplete,    setIsComplete]    = useState(false)
   const [sessionHistory, setSessionHistory] = useState([])
-  const [error, setError] = useState(null)
-  const intervalRef = useRef(null)
+  const [error,         setError]         = useState(null)
+  const [categoria,     setCategoria]     = useState('general')
+  const [nota,          setNota]          = useState('')
+  const [showBreakOffer, setShowBreakOffer] = useState(false)
+  const [minutosHoy,    setMinutosHoy]    = useState(0)
+  const [streak,        setStreak]        = useState(0)
 
-  const totalSeconds = useMemo(() => 
-    mode === 'work' ? workDuration * 60 : breakDuration * 60, 
-    [mode, workDuration, breakDuration]
-  )
+  const intervalRef  = useRef(null)
+  const puntosRef    = useRef(puntos) // evita stale closure en completeSession
 
-  const progress = useMemo(() => 
-    ((totalSeconds - secondsLeft) / totalSeconds) * 100, 
-    [totalSeconds, secondsLeft]
-  )
+  useEffect(() => { puntosRef.current = puntos }, [puntos])
 
-  // EFECTO LÁZARO: Recupera el tiempo si refrescas o cambias de pestaña
+  // ── Cargar datos iniciales ──────────────────────────────
   useEffect(() => {
-    const savedEndTime = localStorage.getItem('pomodoro_end_time')
+    loadTodayStats()
+    requestNotificationPermission()
+  }, [userId])
+
+  const loadTodayStats = async () => {
+    const today = getTodayKey()
+    const { data } = await supabase
+      .from('sesiones')
+      .select('duracion_minutos, creado_en')
+      .eq('user_id', userId)
+      .eq('tipo', 'trabajo')
+      .eq('completada', true)
+
+    if (data) {
+      const hoyMin = data
+        .filter(s => s.creado_en?.startsWith(today))
+        .reduce((acc, s) => acc + s.duracion_minutos, 0)
+      setMinutosHoy(hoyMin)
+
+      // Calcular racha
+      let s = 0
+      for (let i = 0; i < 30; i++) {
+        const d = new Date()
+        d.setDate(d.getDate() - i)
+        const day = d.toISOString().split('T')[0]
+        if (data.some(r => r.creado_en?.startsWith(day))) s++
+        else if (i > 0) break
+      }
+      setStreak(s)
+    }
+  }
+
+  function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }
+
+  // ── Recuperar timer si se refrescó la página ────────────
+  useEffect(() => {
+    const savedEnd  = localStorage.getItem('pomodoro_end_time')
     const savedMode = localStorage.getItem('pomodoro_mode')
-    const savedWorkDuration = localStorage.getItem('pomodoro_work_duration')
-    const savedBreakDuration = localStorage.getItem('pomodoro_break_duration')
+    const savedWork = localStorage.getItem('pomodoro_work_duration')
+    const savedBreak= localStorage.getItem('pomodoro_break_duration')
+    const savedCat  = localStorage.getItem('pomodoro_categoria')
 
-    if (savedWorkDuration) setWorkDuration(parseInt(savedWorkDuration))
-    if (savedBreakDuration) setBreakDuration(parseInt(savedBreakDuration))
+    if (savedWork)  setWorkDuration(parseInt(savedWork))
+    if (savedBreak) setBreakDuration(parseInt(savedBreak))
+    if (savedCat)   setCategoria(savedCat)
 
-    if (savedEndTime && savedMode) {
-      const remaining = Math.round((parseInt(savedEndTime) - Date.now()) / 1000)
+    if (savedEnd && savedMode) {
+      const remaining = Math.round((parseInt(savedEnd) - Date.now()) / 1000)
       if (remaining > 0) {
         setMode(savedMode)
         setSecondsLeft(remaining)
         setIsRunning(true)
       } else {
-        localStorage.removeItem('pomodoro_end_time')
+        clearTimerStorage()
       }
     }
   }, [])
 
-  const resetTimer = useCallback((newMode = mode, newWork = workDuration, newBreak = breakDuration) => {
-    clearInterval(intervalRef.current)
-    localStorage.removeItem('pomodoro_end_time')
-    setIsRunning(false)
-    setIsComplete(false)
-    setError(null)
-    const duration = newMode === 'work' ? newWork * 60 : newBreak * 60
-    setSecondsLeft(duration)
-  }, [mode, workDuration, breakDuration])
+  const clearTimerStorage = () => {
+    ['pomodoro_end_time','pomodoro_mode','pomodoro_work_duration',
+     'pomodoro_break_duration','pomodoro_categoria'].forEach(k => localStorage.removeItem(k))
+  }
 
-  const completeSession = useCallback(async (minutosGanados) => {
+  const totalSeconds = useMemo(() =>
+    mode === 'work' ? workDuration * 60 : breakDuration * 60,
+    [mode, workDuration, breakDuration]
+  )
+
+  const progress = useMemo(() =>
+    ((totalSeconds - secondsLeft) / totalSeconds) * 100,
+    [totalSeconds, secondsLeft]
+  )
+
+  // ── Completar sesión ────────────────────────────────────
+  const completeSession = useCallback(async (currentMode, minutosGanados) => {
+    const currentPuntos = puntosRef.current
     try {
-      let nuevosPuntos = puntos
-      if (mode === 'work') {
-        nuevosPuntos = puntos + minutosGanados
+      let nuevosPuntos = currentPuntos
+      if (currentMode === 'work') {
+        nuevosPuntos = currentPuntos + minutosGanados
         setPuntos(nuevosPuntos)
+        puntosRef.current = nuevosPuntos
       }
 
       const { error: updateError } = await supabase
@@ -73,79 +212,118 @@ export default function Timer({ userId, puntos, setPuntos }) {
 
       if (updateError) throw updateError
 
-      const { error: insertError } = await supabase.from('sesiones').insert({
-        user_id: userId,
-        duracion_minutos: minutosGanados,
-        tipo: mode === 'work' ? 'trabajo' : 'descanso',
-        completada: true,
-      })
+      const { error: insertError } = await supabase
+        .from('sesiones')
+        .insert({
+          user_id: userId,
+          duracion_minutos: minutosGanados,
+          tipo: currentMode === 'work' ? 'trabajo' : 'descanso',
+          completada: true,
+          categoria: currentMode === 'work' ? categoria : 'descanso',
+          nota: nota.trim() || null,
+        })
 
       if (insertError) throw insertError
 
       setSessionHistory(prev => [
-        { 
-          minutos: minutosGanados, 
-          hora: new Date().toLocaleTimeString(), 
-          tipo: mode === 'work' ? 'trabajo' : 'descanso' 
-        }, 
-        ...prev.slice(0, MAX_HISTORY - 1)
+        {
+          minutos: minutosGanados,
+          hora: new Date().toLocaleTimeString(),
+          tipo: currentMode === 'work' ? 'trabajo' : 'descanso',
+          categoria,
+        },
+        ...prev.slice(0, MAX_HISTORY - 1),
       ])
-      localStorage.removeItem('pomodoro_end_time')
+
+      if (currentMode === 'work') {
+        setMinutosHoy(m => m + minutosGanados)
+        playWorkComplete()
+        setShowBreakOffer(true) // Ofrecer descanso automático
+      } else {
+        playBreakComplete()
+      }
+
+      sendNotification(currentMode, minutosGanados)
+      clearTimerStorage()
+      setNota('')
     } catch (err) {
       setError('Error al guardar la sesión: ' + err.message)
-      if (mode === 'work') setPuntos(puntos) // Revertir puntos si falla
-    }
-  }, [puntos, setPuntos, userId, mode])
-
-  useEffect(() => {
-    if (isRunning) {
-      if (!localStorage.getItem('pomodoro_end_time')) {
-        const endTime = Date.now() + (secondsLeft * 1000)
-        localStorage.setItem('pomodoro_end_time', endTime.toString())
-        localStorage.setItem('pomodoro_mode', mode)
-        localStorage.setItem('pomodoro_work_duration', workDuration.toString())
-        localStorage.setItem('pomodoro_break_duration', breakDuration.toString())
+      if (currentMode === 'work') {
+        setPuntos(currentPuntos)
+        puntosRef.current = currentPuntos
       }
-      intervalRef.current = setInterval(() => {
-        const endTime = parseInt(localStorage.getItem('pomodoro_end_time'))
-        const now = Date.now()
-        const remaining = Math.round((endTime - now) / 1000)
-        if (remaining <= 0) {
-          clearInterval(intervalRef.current)
-          setSecondsLeft(0)
-          setIsRunning(false)
-          setIsComplete(true)
-          const minutos = mode === 'work' ? workDuration : breakDuration
-          completeSession(minutos)
-        } else {
-          setSecondsLeft(remaining)
-        }
-      }, 1000)
     }
-    return () => clearInterval(intervalRef.current)
-  }, [isRunning, mode, workDuration, breakDuration, completeSession, secondsLeft])
+  }, [userId, setPuntos, categoria, nota])
 
-  // Notificaciones
-  useEffect(() => {
-    if (isComplete && Notification.permission === 'granted') {
-      new Notification('¡Sesión completada!', { 
-        body: mode === 'work' 
-          ? `Has ganado ${workDuration} puntos.` 
-          : 'Tu descanso ha terminado.' 
+  function sendNotification(currentMode, minutos) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('¡Sesión completada! ⬡', {
+        body: currentMode === 'work'
+          ? `+${minutos} puntos ganados. Hora de descansar.`
+          : 'Descanso terminado. ¡A trabajar!',
       })
     }
-  }, [isComplete, mode, workDuration])
+  }
 
+  // ── Loop del timer ──────────────────────────────────────
   useEffect(() => {
-    if (Notification.permission !== 'granted') Notification.requestPermission()
-  }, [])
+    if (!isRunning) return
 
-  const handleStart = () => { if (!isComplete) setIsRunning(true) }
+    const capturedMode = mode
+    const capturedWork = workDuration
+    const capturedBreak= breakDuration
+
+    if (!localStorage.getItem('pomodoro_end_time')) {
+      const endTime = Date.now() + secondsLeft * 1000
+      localStorage.setItem('pomodoro_end_time', endTime.toString())
+      localStorage.setItem('pomodoro_mode', capturedMode)
+      localStorage.setItem('pomodoro_work_duration', capturedWork.toString())
+      localStorage.setItem('pomodoro_break_duration', capturedBreak.toString())
+      localStorage.setItem('pomodoro_categoria', categoria)
+    }
+
+    intervalRef.current = setInterval(() => {
+      const endTime   = parseInt(localStorage.getItem('pomodoro_end_time'))
+      const remaining = Math.round((endTime - Date.now()) / 1000)
+
+      if (remaining <= 0) {
+        clearInterval(intervalRef.current)
+        setSecondsLeft(0)
+        setIsRunning(false)
+        setIsComplete(true)
+        const minutos = capturedMode === 'work' ? capturedWork : capturedBreak
+        completeSession(capturedMode, minutos)
+      } else {
+        setSecondsLeft(remaining)
+      }
+    }, 500)
+
+    return () => clearInterval(intervalRef.current)
+  }, [isRunning]) // Intencional: solo re-corre cuando cambia isRunning
+
+  // ── Controles ───────────────────────────────────────────
+  const resetTimer = useCallback((newMode = mode, newWork = workDuration, newBreak = breakDuration) => {
+    clearInterval(intervalRef.current)
+    clearTimerStorage()
+    setIsRunning(false)
+    setIsComplete(false)
+    setError(null)
+    setShowBreakOffer(false)
+    const duration = newMode === 'work' ? newWork * 60 : newBreak * 60
+    setSecondsLeft(duration)
+  }, [mode, workDuration, breakDuration])
+
+  const handleStart = () => {
+    if (!isComplete) {
+      setShowBreakOffer(false)
+      setIsRunning(true)
+    }
+  }
 
   const handlePause = () => {
     setIsRunning(false)
     clearInterval(intervalRef.current)
-    localStorage.removeItem('pomodoro_end_time')
+    clearTimerStorage()
   }
 
   const handleModeChange = (newMode) => {
@@ -154,54 +332,51 @@ export default function Timer({ userId, puntos, setPuntos }) {
   }
 
   const handleWorkDurationChange = (mins) => {
+    if (isRunning) return
     setWorkDuration(mins)
-    if (mode === 'work') { 
-      setSecondsLeft(mins * 60) 
-      setIsRunning(false) 
-      setIsComplete(false) 
-    }
+    if (mode === 'work') { setSecondsLeft(mins * 60); setIsComplete(false) }
   }
 
   const handleBreakDurationChange = (mins) => {
+    if (isRunning) return
     setBreakDuration(mins)
-    if (mode === 'break') { 
-      setSecondsLeft(mins * 60) 
-      setIsRunning(false) 
-      setIsComplete(false) 
-    }
+    if (mode === 'break') { setSecondsLeft(mins * 60); setIsComplete(false) }
   }
 
+  const startBreakNow = () => {
+    setShowBreakOffer(false)
+    setMode('break')
+    setSecondsLeft(breakDuration * 60)
+    setIsComplete(false)
+    setTimeout(() => setIsRunning(true), 100)
+  }
+
+  // ── Render ──────────────────────────────────────────────
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0')
   const seconds = (secondsLeft % 60).toString().padStart(2, '0')
-  const radius = 130
+  const radius  = 130
   const circumference = 2 * Math.PI * radius
   const strokeDashoffset = circumference - (progress / 100) * circumference
 
   return (
     <div className="timer-container">
-      {error && <div className="error-message">{error}</div>}
-      {/* Botones de Modo */}
-      <div className="mode-toggle">
-        <button
-          className={`mode-btn ${mode === 'work' ? 'active' : ''}`}
-          onClick={() => handleModeChange('work')}
-          aria-label="Cambiar a modo trabajo"
-          role="tab"
-          aria-selected={mode === 'work'}
-        >
-          Trabajo
-        </button>
-        <button
-          className={`mode-btn ${mode === 'break' ? 'active' : ''}`}
-          onClick={() => handleModeChange('break')}
-          aria-label="Cambiar a modo descanso"
-          role="tab"
-          aria-selected={mode === 'break'}
-        >
-          Descanso
-        </button>
+      {error && <div className="error-message">{error}<button className="btn-ghost small" onClick={() => setError(null)}>✕</button></div>}
+
+      {/* Racha + Meta */}
+      <div className="timer-top-row">
+        <StreakBadge streak={streak} />
+        <NextPrizeBanner puntos={puntos} />
       </div>
-      {/* Selectores de Tiempo */}
+
+      <DailyGoalBar minutosHoy={minutosHoy} meta={metaDiaria} onChangeMeta={onUpdateMeta} />
+
+      {/* Modo */}
+      <div className="mode-toggle">
+        <button className={`mode-btn ${mode === 'work'  ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
+        <button className={`mode-btn ${mode === 'break' ? 'active' : ''}`} onClick={() => handleModeChange('break')}>Descanso</button>
+      </div>
+
+      {/* Duración */}
       <div className="duration-selectors">
         <div className="selector-group">
           {(mode === 'work' ? WORK_SESSIONS : BREAK_SESSIONS).map(m => (
@@ -210,16 +385,32 @@ export default function Timer({ userId, puntos, setPuntos }) {
               className={`dur-btn ${(mode === 'work' ? workDuration : breakDuration) === m ? 'active' : ''}`}
               onClick={() => mode === 'work' ? handleWorkDurationChange(m) : handleBreakDurationChange(m)}
               disabled={isRunning}
-              aria-label={`Seleccionar ${m} minutos para ${mode}`}
             >
               {m}m
             </button>
           ))}
         </div>
       </div>
-      {/* Círculo del Temporizador */}
+
+      {/* Categoría — solo visible en modo trabajo y cuando no está corriendo */}
+      {mode === 'work' && !isRunning && !isComplete && (
+        <div className="categoria-selector">
+          {CATEGORIAS.map(c => (
+            <button
+              key={c.id}
+              className={`cat-btn ${categoria === c.id ? 'active' : ''}`}
+              onClick={() => setCategoria(c.id)}
+              title={c.label}
+            >
+              {c.emoji} <span>{c.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Círculo */}
       <div className="timer-circle-wrapper">
-        <svg className="timer-svg" viewBox="0 0 300 300" aria-hidden="true">
+        <svg className="timer-svg" viewBox="0 0 300 300">
           <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
           <circle
             className={`circle-progress ${isComplete ? 'complete' : ''}`}
@@ -230,7 +421,7 @@ export default function Timer({ userId, puntos, setPuntos }) {
             transform="rotate(-90 150 150)"
           />
         </svg>
-        <div className="timer-display" aria-live="polite">
+        <div className="timer-display">
           {isComplete ? (
             <div className="complete-badge">✓</div>
           ) : (
@@ -243,36 +434,62 @@ export default function Timer({ userId, puntos, setPuntos }) {
           )}
         </div>
       </div>
+
+      {/* Oferta de descanso automático */}
+      {showBreakOffer && (
+        <div className="break-offer">
+          <p>¡Trabajo completado! ¿Empezar descanso de {breakDuration} min?</p>
+          <div className="break-offer-actions">
+            <button className="btn-primary" onClick={startBreakNow}>Sí, descansar</button>
+            <button className="btn-ghost"  onClick={() => { setShowBreakOffer(false); resetTimer() }}>Saltar</button>
+          </div>
+        </div>
+      )}
+
       {/* Controles */}
-      <div className="timer-controls">
-        {!isRunning && !isComplete && (
-          <button className="btn-primary large" onClick={handleStart}>
-            {secondsLeft < totalSeconds ? 'Reanudar' : 'Iniciar'}
-          </button>
-        )}
-        {isRunning && (
-          <button className="btn-secondary large" onClick={handlePause}>
-            Pausar
-          </button>
-        )}
-        {isComplete && (
-          <button className="btn-primary large" onClick={() => resetTimer()}>
-            Nueva sesión
-          </button>
-        )}
-        {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
-          <button className="btn-ghost" onClick={() => resetTimer()}>
-            Cancelar
-          </button>
-        )}
-      </div>
+      {!showBreakOffer && (
+        <div className="timer-controls">
+          {!isRunning && !isComplete && (
+            <button className="btn-primary large" onClick={handleStart}>
+              {secondsLeft < totalSeconds ? 'Reanudar' : 'Iniciar'}
+            </button>
+          )}
+          {isRunning && (
+            <button className="btn-secondary large" onClick={handlePause}>Pausar</button>
+          )}
+          {isComplete && !showBreakOffer && (
+            <button className="btn-primary large" onClick={() => resetTimer()}>Nueva sesión</button>
+          )}
+          {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
+            <button className="btn-ghost" onClick={() => resetTimer()}>Cancelar</button>
+          )}
+        </div>
+      )}
+
+      {/* Nota de sesión */}
+      {mode === 'work' && !isRunning && !isComplete && (
+        <div className="nota-input-wrapper">
+          <input
+            className="nota-input"
+            type="text"
+            placeholder="Nota opcional (¿en qué trabajaste?)"
+            value={nota}
+            onChange={e => setNota(e.target.value)}
+            maxLength={120}
+          />
+        </div>
+      )}
+
       {/* Historial */}
       {sessionHistory.length > 0 && (
         <div className="session-history">
           <p className="history-title">Sesiones de hoy</p>
           {sessionHistory.map((s, i) => (
             <div key={i} className="history-item">
-              <span>✓ {s.minutos} min {s.tipo}</span>
+              <span>
+                {CATEGORIAS.find(c => c.id === s.categoria)?.emoji ?? '📌'}
+                {' '}{s.minutos} min {s.tipo}
+              </span>
               <span className="history-time">{s.hora}</span>
             </div>
           ))}
