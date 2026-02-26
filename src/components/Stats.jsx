@@ -69,7 +69,7 @@ function StatCard({ label, value, unit, sub, color = ORANGE }) {
 function exportCSV(sesiones) {
   const header = 'fecha,duracion_minutos,tipo,categoria,nota'
   const rows   = sesiones.map(s =>
-    [s.creado_en?.slice(0, 19), s.duracion_minutos, s.tipo, s.categoria ?? '', (s.nota ?? '').replace(/,/g, ';')].join(',')
+    [s.created_at?.slice(0, 19), s.duracion_minutos, s.tipo, s.categoria ?? '', (s.nota ?? '').replace(/,/g, ';')].join(',')
   )
   const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' })
   const url  = URL.createObjectURL(blob)
@@ -95,12 +95,12 @@ export default function Stats({ userId }) {
     const fetchSesiones = async () => {
       setLoading(true); setError(null)
 
-      // FIX: la columna se llama creado_en, no created_at
+      // FIX: la columna se llama created_at, no created_at
       const { data, error: fetchError } = await supabase
         .from('sesiones')
         .select('*')
         .eq('user_id', userId)
-        .order('creado_en', { ascending: true })
+        .order('created_at', { ascending: true })
 
       if (fetchError) { setError(`Error al cargar: ${fetchError.message}`); setLoading(false); return }
 
@@ -110,7 +110,7 @@ export default function Stats({ userId }) {
       const filtradas = (data || []).filter(s =>
         s.completada === true &&
         s.tipo === 'trabajo' &&
-        new Date(s.creado_en) >= hace30
+        new Date(s.created_at) >= hace30
       )
 
       setAllSesiones(filtradas)
@@ -129,7 +129,7 @@ export default function Stats({ userId }) {
 
   const weekData = useMemo(() => {
     return getLast7Days().map(day => {
-      const ds = sesiones.filter(s => s.creado_en?.startsWith(day))
+      const ds = sesiones.filter(s => s.created_at?.startsWith(day))
       return {
         dia: formatDay(day), fecha: formatDate(day),
         minutos: ds.reduce((a, s) => a + s.duracion_minutos, 0),
@@ -142,7 +142,7 @@ export default function Stats({ userId }) {
   const hourData = useMemo(() => {
     const hours = Array.from({ length: 20 }, (_, h) => ({ hora: `${h + 4}h`, minutos: 0 }))
     sesiones.forEach(s => {
-      const h = new Date(s.creado_en).getHours()
+      const h = new Date(s.created_at).getHours()
       if (h >= 4 && h < 24) hours[h - 4].minutos += s.duracion_minutos
     })
     return hours
@@ -155,7 +155,7 @@ export default function Stats({ userId }) {
       const day = d.toISOString().split('T')[0]
       return {
         dia: `${d.getDate()}/${d.getMonth() + 1}`,
-        minutos: sesiones.filter(s => s.creado_en?.startsWith(day)).reduce((a, s) => a + s.duracion_minutos, 0),
+        minutos: sesiones.filter(s => s.created_at?.startsWith(day)).reduce((a, s) => a + s.duracion_minutos, 0),
       }
     })
   }, [sesiones])
@@ -173,13 +173,13 @@ export default function Stats({ userId }) {
 
   const stats = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0]
-    const minutosHoy = sesiones.filter(s => s.creado_en?.startsWith(hoy)).reduce((a, s) => a + s.duracion_minutos, 0)
+    const minutosHoy = sesiones.filter(s => s.created_at?.startsWith(hoy)).reduce((a, s) => a + s.duracion_minutos, 0)
     const bestDay    = weekData.reduce((b, d) => d.minutos > b.minutos ? d : b, { minutos: 0, dia: '-' })
     let streak = 0
     for (let i = 0; i < 30; i++) {
       const d = new Date(); d.setDate(d.getDate() - i)
       const day = d.toISOString().split('T')[0]
-      if (allSesiones.some(s => s.creado_en?.startsWith(day))) streak++
+      if (allSesiones.some(s => s.created_at?.startsWith(day))) streak++
       else if (i > 0) break
     }
     const peakHour = hourData.reduce((b, h) => h.minutos > b.minutos ? h : b, { minutos: 0, hora: '-' })
