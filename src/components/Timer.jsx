@@ -125,14 +125,14 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
     const today = getTodayKey()
     const { data } = await supabase
       .from('sesiones')
-      .select('duracion_minutos, creado_en')
+      .select('duracion_minutos, created_at')
       .eq('user_id', userId)
       .eq('tipo', 'trabajo')
       .eq('completada', true)
 
     if (data) {
       const hoyMin = data
-        .filter(s => s.creado_en?.startsWith(today))
+        .filter(s => s.created_at?.startsWith(today))
         .reduce((acc, s) => acc + s.duracion_minutos, 0)
       setMinutosHoy(hoyMin)
 
@@ -142,7 +142,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         const d = new Date()
         d.setDate(d.getDate() - i)
         const day = d.toISOString().split('T')[0]
-        if (data.some(r => r.creado_en?.startsWith(day))) s++
+        if (data.some(r => r.created_at?.startsWith(day))) s++
         else if (i > 0) break
       }
       setStreak(s)
