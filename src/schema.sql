@@ -1,28 +1,43 @@
 -- ═══════════════════════════════════════════════════════
---  FOCVS — Esquema SQL para Supabase
+--  FOCVS — Esquema SQL para Supabase (v2)
 --  Ejecutar en: Supabase > SQL Editor > New Query
+--  Las sentencias usan IF NOT EXISTS / IF NOT EXISTS
+--  para que sea seguro correrlo en una DB ya existente.
 -- ═══════════════════════════════════════════════════════
 
 -- ── 1. Tabla perfiles ────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.perfiles (
-  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  puntos_totales  INT  NOT NULL DEFAULT 0,
-  creado_en       TIMESTAMPTZ DEFAULT NOW(),
+  id                    UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id               UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  puntos_totales        INT  NOT NULL DEFAULT 0,
+  meta_diaria_minutos   INT  NOT NULL DEFAULT 120,
+  creado_en             TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id)
 );
 
--- ── 2. Tabla sesiones (historial de trabajo) ─────────
+-- Migración segura: agregar columna si no existe
+ALTER TABLE public.perfiles
+  ADD COLUMN IF NOT EXISTS meta_diaria_minutos INT NOT NULL DEFAULT 120;
+
+-- ── 2. Tabla sesiones ────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.sesiones (
   id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id           UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   duracion_minutos  INT  NOT NULL,
-  tipo              TEXT NOT NULL DEFAULT 'trabajo',  -- 'trabajo' | 'descanso'
+  tipo              TEXT NOT NULL DEFAULT 'trabajo',
   completada        BOOLEAN NOT NULL DEFAULT FALSE,
+  categoria         TEXT NOT NULL DEFAULT 'general',
+  nota              TEXT,
   creado_en         TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── 3. Tabla canjes (historial de recompensas) ────────
+-- Migración segura
+ALTER TABLE public.sesiones
+  ADD COLUMN IF NOT EXISTS categoria TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE public.sesiones
+  ADD COLUMN IF NOT EXISTS nota TEXT;
+
+-- ── 3. Tabla canjes ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.canjes (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -32,47 +47,34 @@ CREATE TABLE IF NOT EXISTS public.canjes (
 );
 
 -- ═══════════════════════════════════════════════════════
---  Row Level Security (RLS) — Cada usuario solo ve sus datos
+--  Row Level Security
 -- ═══════════════════════════════════════════════════════
-
--- Habilitar RLS en todas las tablas
 ALTER TABLE public.perfiles  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sesiones  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.canjes    ENABLE ROW LEVEL SECURITY;
 
--- Políticas para 'perfiles'
-CREATE POLICY "Usuario puede ver su perfil"
-  ON public.perfiles FOR SELECT
-  USING (auth.uid() = user_id);
+-- Perfiles
+CREATE POLICY IF NOT EXISTS "Usuario puede ver su perfil"
+  ON public.perfiles FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY IF NOT EXISTS "Usuario puede crear su perfil"
+  ON public.perfiles FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY IF NOT EXISTS "Usuario puede actualizar su perfil"
+  ON public.perfiles FOR UPDATE USING (auth.uid() = user_id);
 
-CREATE POLICY "Usuario puede crear su perfil"
-  ON public.perfiles FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+-- Sesiones
+CREATE POLICY IF NOT EXISTS "Usuario ve sus sesiones"
+  ON public.sesiones FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY IF NOT EXISTS "Usuario registra sus sesiones"
+  ON public.sesiones FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Usuario puede actualizar su perfil"
-  ON public.perfiles FOR UPDATE
-  USING (auth.uid() = user_id);
-
--- Políticas para 'sesiones'
-CREATE POLICY "Usuario ve sus sesiones"
-  ON public.sesiones FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "Usuario registra sus sesiones"
-  ON public.sesiones FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
-
--- Políticas para 'canjes'
-CREATE POLICY "Usuario ve sus canjes"
-  ON public.canjes FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "Usuario registra sus canjes"
-  ON public.canjes FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+-- Canjes
+CREATE POLICY IF NOT EXISTS "Usuario ve sus canjes"
+  ON public.canjes FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY IF NOT EXISTS "Usuario registra sus canjes"
+  ON public.canjes FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- ═══════════════════════════════════════════════════════
---  Función RPC opcional: canjear_puntos (segura del lado servidor)
+--  Función RPC: canjear_puntos (atómica, evita race conditions)
 -- ═══════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.canjear_puntos(
   p_user_id     UUID,
@@ -87,28 +89,42 @@ DECLARE
   v_puntos_actuales INT;
   v_nuevos_puntos   INT;
 BEGIN
-  -- Obtener puntos actuales con lock para evitar race conditions
   SELECT puntos_totales INTO v_puntos_actuales
   FROM public.perfiles
   WHERE user_id = p_user_id
   FOR UPDATE;
 
-  -- Validar saldo suficiente
   IF v_puntos_actuales < p_costo THEN
     RETURN json_build_object('exito', false, 'mensaje', 'Puntos insuficientes');
   END IF;
 
   v_nuevos_puntos := v_puntos_actuales - p_costo;
 
-  -- Descontar puntos
   UPDATE public.perfiles
-  SET puntos_totales = v_nuevos_puntos
+    SET puntos_totales = v_nuevos_puntos
   WHERE user_id = p_user_id;
 
-  -- Registrar el canje
   INSERT INTO public.canjes (user_id, premio_nombre, puntos_usados)
   VALUES (p_user_id, p_premio, p_costo);
 
   RETURN json_build_object('exito', true, 'puntos_restantes', v_nuevos_puntos);
+END;
+$$;
+
+-- ═══════════════════════════════════════════════════════
+--  Función RPC: actualizar_meta_diaria
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.actualizar_meta_diaria(
+  p_user_id UUID,
+  p_meta    INT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE public.perfiles
+    SET meta_diaria_minutos = p_meta
+  WHERE user_id = p_user_id;
 END;
 $$;
