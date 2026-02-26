@@ -10,7 +10,7 @@ function getNextPrize(puntos) {
 }
 
 function getTodayKey() {
-  return new Date().toISOString().split('T')[0]
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Costa_Rica' })
 }
 
 // ─── Subcomponentes ───────────────────────────────────────
@@ -122,7 +122,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
   }, [userId])
 
   const loadTodayStats = async () => {
-    const today = getTodayKey()
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Costa_Rica' })
     const { data } = await supabase
       .from('sesiones')
       .select('duracion_minutos, created_at')
@@ -141,7 +141,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
       for (let i = 0; i < 30; i++) {
         const d = new Date()
         d.setDate(d.getDate() - i)
-        const day = d.toISOString().split('T')[0]
+        const day = d.toLocaleDateString('en-CA', { timeZone: 'America/Costa_Rica' })
         if (data.some(r => r.created_at?.startsWith(day))) s++
         else if (i > 0) break
       }

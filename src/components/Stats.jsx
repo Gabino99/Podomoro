@@ -6,10 +6,26 @@ import {
   CartesianGrid, AreaChart, Area, Cell,
 } from 'recharts'
 
+const TZ = 'America/Costa_Rica'
+
+// Convierte un timestamp UTC de Supabase a fecha local CR (YYYY-MM-DD)
+function toLocalDate(utcStr) {
+  return new Date(utcStr).toLocaleDateString('en-CA', { timeZone: TZ }) // en-CA = YYYY-MM-DD
+}
+// Hora local CR (0-23)
+function toLocalHour(utcStr) {
+  return parseInt(new Date(utcStr).toLocaleString('en-US', { timeZone: TZ, hour: 'numeric', hour12: false }))
+}
+// Día local CR para formateo
+function toLocalDay(utcStr) {
+  const d = new Date(utcStr)
+  return parseInt(d.toLocaleString('en-US', { timeZone: TZ, weekday: 'short' }))
+}
+
 const DAYS_ES   = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
 const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
 
-function formatDay(dateStr)  { const d = new Date(dateStr); return DAYS_ES[d.getDay()] }
+function formatDay(dateStr)  { const d = new Date(dateStr); return DAYS_ES[parseInt(d.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short' }).slice(0,1))] || DAYS_ES[d.getDay()] }
 function formatDate(dateStr) { const d = new Date(dateStr); return `${d.getDate()} ${MONTHS_ES[d.getMonth()]}` }
 
 function getLast7Days() {
@@ -17,7 +33,7 @@ function getLast7Days() {
     const d = new Date()
     d.setDate(d.getDate() - (6 - i))
     d.setHours(0, 0, 0, 0)
-    return d.toISOString().split('T')[0]
+    return d.toLocaleDateString('en-CA', { timeZone: TZ })
   })
 }
 
@@ -129,12 +145,12 @@ export default function Stats({ userId }) {
 
   const weekData = useMemo(() => {
     return getLast7Days().map(day => {
-      const ds = sesiones.filter(s => s.created_at?.startsWith(day))
+      const ds = sesiones.filter(s => toLocalDate(s.created_at) === day)
       return {
         dia: formatDay(day), fecha: formatDate(day),
         minutos: ds.reduce((a, s) => a + s.duracion_minutos, 0),
         sesiones: ds.length,
-        isToday: day === new Date().toISOString().split('T')[0],
+        isToday: day === new Date().toLocaleDateString('en-CA', { timeZone: TZ }),
       }
     })
   }, [sesiones])
@@ -142,7 +158,7 @@ export default function Stats({ userId }) {
   const hourData = useMemo(() => {
     const hours = Array.from({ length: 20 }, (_, h) => ({ hora: `${h + 4}h`, minutos: 0 }))
     sesiones.forEach(s => {
-      const h = new Date(s.created_at).getHours()
+      const h = toLocalHour(s.created_at)
       if (h >= 4 && h < 24) hours[h - 4].minutos += s.duracion_minutos
     })
     return hours
@@ -152,10 +168,11 @@ export default function Stats({ userId }) {
     return Array.from({ length: 30 }, (_, i) => {
       const d = new Date()
       d.setDate(d.getDate() - (29 - i))
-      const day = d.toISOString().split('T')[0]
+      const day = d.toLocaleDateString('en-CA', { timeZone: TZ })
+      const [, m, dd] = day.split('-')
       return {
-        dia: `${d.getDate()}/${d.getMonth() + 1}`,
-        minutos: sesiones.filter(s => s.created_at?.startsWith(day)).reduce((a, s) => a + s.duracion_minutos, 0),
+        dia: `${parseInt(dd)}/${parseInt(m)}`,
+        minutos: sesiones.filter(s => toLocalDate(s.created_at) === day).reduce((a, s) => a + s.duracion_minutos, 0),
       }
     })
   }, [sesiones])
@@ -172,14 +189,14 @@ export default function Stats({ userId }) {
   }, [allSesiones])
 
   const stats = useMemo(() => {
-    const hoy = new Date().toISOString().split('T')[0]
-    const minutosHoy = sesiones.filter(s => s.created_at?.startsWith(hoy)).reduce((a, s) => a + s.duracion_minutos, 0)
+    const hoy = new Date().toLocaleDateString('en-CA', { timeZone: TZ })
+    const minutosHoy = sesiones.filter(s => toLocalDate(s.created_at) === hoy).reduce((a, s) => a + s.duracion_minutos, 0)
     const bestDay    = weekData.reduce((b, d) => d.minutos > b.minutos ? d : b, { minutos: 0, dia: '-' })
     let streak = 0
     for (let i = 0; i < 30; i++) {
       const d = new Date(); d.setDate(d.getDate() - i)
-      const day = d.toISOString().split('T')[0]
-      if (allSesiones.some(s => s.created_at?.startsWith(day))) streak++
+      const day = d.toLocaleDateString('en-CA', { timeZone: TZ })
+      if (allSesiones.some(s => toLocalDate(s.created_at) === day)) streak++
       else if (i > 0) break
     }
     const peakHour = hourData.reduce((b, h) => h.minutos > b.minutos ? h : b, { minutos: 0, hora: '-' })
