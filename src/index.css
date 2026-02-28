@@ -191,6 +191,7 @@ input  { font-family: inherit; }
 .timer-container {
   max-width: 540px; margin: 0 auto;
   display: flex; flex-direction: column; align-items: center; gap: 1.25rem;
+  position: relative; z-index: 1;
 }
 
 .error-message {
@@ -414,3 +415,4 @@ input  { font-family: inherit; }
   .next-prize-banner { width: 100%; }
   .cat-btn span { display: inline; }
 }
+
