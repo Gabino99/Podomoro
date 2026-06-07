@@ -8,11 +8,13 @@ export const PREMIOS = [
 ]
 
 export const CATEGORIAS = [
-  { id: 'general',   label: 'General',    emoji: '📌' },
-  { id: 'estudio',   label: 'Estudio',    emoji: '📚' },
-  { id: 'trabajo',   label: 'Trabajo',    emoji: '💼' },
-  { id: 'proyecto',  label: 'Proyecto',   emoji: '🚀' },
-  { id: 'ejercicio', label: 'Ejercicio',  emoji: '🏃' },
+  { id: 'general',           label: 'General',           emoji: '📌' },
+  { id: 'estudio',           label: 'Estudio',           emoji: '📚' },
+  { id: 'trabajo',           label: 'Trabajo',           emoji: '💼' },
+  { id: 'proyecto',          label: 'Proyecto',          emoji: '🚀' },
+  { id: 'ejercicio',         label: 'Ejercicio',         emoji: '🏃' },
+  { id: 'responsabilidades', label: 'Responsabilidades', emoji: '✅' },
+  { id: 'ocio',              label: 'Ocio',              emoji: '🎮' },
 ]
 
 export const WORK_SESSIONS  = [20, 25, 30, 45, 60]
