@@ -70,9 +70,10 @@ function StatCard({ label, value, unit, sub, color = ORANGE }) {
 // ── Export CSV ────────────────────────────────────────────
 function exportCSV(sesiones) {
   const header = 'fecha,duracion_minutos,tipo,categoria,nota'
-  const rows   = sesiones.map(s =>
-    [s.created_at?.slice(0, 19), s.duracion_minutos, s.tipo, s.categoria ?? '', (s.nota ?? '').replace(/,/g, ';')].join(',')
-  )
+  const rows   = sesiones.map(s => {
+    const local = new Date(s.created_at).toLocaleString('sv-SE', { timeZone: TZ }).replace(' ', 'T')
+    return [local, s.duracion_minutos, s.tipo, s.categoria ?? '', (s.nota ?? '').replace(/,/g, ';')].join(',')
+  })
   const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' })
   const url  = URL.createObjectURL(blob)
   const a    = document.createElement('a')
