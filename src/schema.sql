@@ -89,6 +89,10 @@ DECLARE
   v_puntos_actuales INT;
   v_nuevos_puntos   INT;
 BEGIN
+  IF auth.uid() != p_user_id THEN
+    RETURN json_build_object('exito', false, 'mensaje', 'No autorizado');
+  END IF;
+
   SELECT puntos_totales INTO v_puntos_actuales
   FROM public.perfiles
   WHERE user_id = p_user_id
@@ -123,6 +127,10 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
+  IF auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'No autorizado';
+  END IF;
+
   UPDATE public.perfiles
     SET meta_diaria_minutos = p_meta
   WHERE user_id = p_user_id;

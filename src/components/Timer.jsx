@@ -103,12 +103,15 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
 
   const loadTodayStats = async () => {
     const today = getTodayKey()
+    const desde = new Date()
+    desde.setDate(desde.getDate() - 31)
     const { data } = await supabase
       .from('sesiones')
       .select('duracion_minutos, created_at')
       .eq('user_id', userId)
       .eq('tipo', 'trabajo')
       .eq('completada', true)
+      .gte('created_at', desde.toISOString())
 
     if (data) {
       const hoyMin = data.filter(s => s.created_at?.startsWith(today)).reduce((a, s) => a + s.duracion_minutos, 0)
@@ -135,7 +138,11 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
     if (savedBreak) setBreakDuration(parseInt(savedBreak))
     if (savedCat)   setCategoria(savedCat)
 
-    if (savedEnd && savedMode) {
+    const savedPaused = localStorage.getItem('pomodoro_paused_seconds')
+    if (savedPaused && savedMode) {
+      setMode(savedMode)
+      setSecondsLeft(parseInt(savedPaused))
+    } else if (savedEnd && savedMode) {
       const remaining = Math.round((parseInt(savedEnd) - Date.now()) / 1000)
       if (remaining > 0) { setMode(savedMode); setSecondsLeft(remaining); setIsRunning(true) }
       else clearTimerStorage()
@@ -143,7 +150,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
   }, [])
 
   const clearTimerStorage = () => {
-    ['pomodoro_end_time','pomodoro_mode','pomodoro_work_duration','pomodoro_break_duration','pomodoro_categoria']
+    ['pomodoro_end_time','pomodoro_mode','pomodoro_work_duration','pomodoro_break_duration','pomodoro_categoria','pomodoro_paused_seconds']
       .forEach(k => localStorage.removeItem(k))
   }
 
@@ -218,12 +225,14 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
     setSecondsLeft(newMode === 'work' ? newWork * 60 : newBreak * 60)
   }, [mode, workDuration, breakDuration])
 
-  const handleStart  = () => { if (!isComplete) { setShowBreakOffer(false); setIsRunning(true) } }
-  const handlePause  = () => { setIsRunning(false); clearInterval(intervalRef.current); clearTimerStorage() }
+  const handleStart  = () => { if (!isComplete) { setShowBreakOffer(false); localStorage.removeItem('pomodoro_paused_seconds'); setIsRunning(true) } }
+  const handlePause  = () => { setIsRunning(false); clearInterval(intervalRef.current); localStorage.setItem('pomodoro_paused_seconds', secondsLeft.toString()); localStorage.setItem('pomodoro_mode', mode); localStorage.setItem('pomodoro_work_duration', workDuration.toString()); localStorage.setItem('pomodoro_break_duration', breakDuration.toString()); localStorage.setItem('pomodoro_categoria', categoria); localStorage.removeItem('pomodoro_end_time') }
   const handleModeChange = (newMode) => { setMode(newMode); resetTimer(newMode) }
   const handleWorkDurationChange  = (m) => { if (isRunning) return; setWorkDuration(m);  if (mode === 'work')  { setSecondsLeft(m * 60); setIsComplete(false) } }
   const handleBreakDurationChange = (m) => { if (isRunning) return; setBreakDuration(m); if (mode === 'break') { setSecondsLeft(m * 60); setIsComplete(false) } }
-  const startBreakNow = () => { setShowBreakOffer(false); setMode('break'); setSecondsLeft(breakDuration * 60); setIsComplete(false); setTimeout(() => setIsRunning(true), 100) }
+  const [pendingBreak, setPendingBreak] = useState(false)
+  const startBreakNow = () => { setShowBreakOffer(false); setMode('break'); setSecondsLeft(breakDuration * 60); setIsComplete(false); setPendingBreak(true) }
+  useEffect(() => { if (pendingBreak && mode === 'break' && !isRunning) { setPendingBreak(false); setIsRunning(true) } }, [pendingBreak, mode])
 
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0')
   const seconds = (secondsLeft % 60).toString().padStart(2, '0')
