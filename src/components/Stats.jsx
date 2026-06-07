@@ -71,10 +71,9 @@ function StatCard({ label, value, unit, sub, color = ORANGE }) {
 function exportCSV(sesiones) {
   const header = 'fecha,duracion_minutos,tipo,categoria,nota'
   const rows   = sesiones.map(s => {
-    const d = new Date(s.created_at)
-    const fecha = d.toLocaleDateString('en-CA', { timeZone: TZ })
-    const hora  = d.toLocaleTimeString('en-GB', { timeZone: TZ, hour12: false })
-    return [`${fecha}T${hora}`, s.duracion_minutos, s.tipo, s.categoria ?? '', (s.nota ?? '').replace(/,/g, ';')].join(',')
+    const d = new Date(new Date(s.created_at).getTime() - 6 * 60 * 60 * 1000)
+    const local = d.toISOString().slice(0, 19)
+    return [local, s.duracion_minutos, s.tipo, s.categoria ?? '', (s.nota ?? '').replace(/,/g, ';')].join(',')
   })
   const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' })
   const url  = URL.createObjectURL(blob)
