@@ -327,6 +327,26 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
               disabled={isRunning}
             >{m}m</button>
           ))}
+          <div className="custom-duration">
+            <input
+              type="number"
+              min="1"
+              max="180"
+              placeholder="Min"
+              className="custom-duration-input"
+              disabled={isRunning}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  const val = Math.max(1, Math.min(180, parseInt(e.target.value) || 0))
+                  if (val > 0) {
+                    mode === 'work' ? handleWorkDurationChange(val) : handleBreakDurationChange(val)
+                    e.target.value = ''
+                    e.target.blur()
+                  }
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
 

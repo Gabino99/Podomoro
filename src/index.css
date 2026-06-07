@@ -277,6 +277,17 @@ input  { font-family: inherit; }
 .dur-btn:hover:not(:disabled):not(.active) { border-color: var(--border-active); color: var(--text-1); }
 .dur-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.custom-duration { display: flex; align-items: center; }
+.custom-duration-input {
+  width: 52px; background: var(--bg-2); color: var(--text-2);
+  font-family: var(--font-mono); font-size: 0.8rem; text-align: center;
+  padding: 0.4rem 0.3rem; border-radius: 100px;
+  border: 1px solid var(--border); outline: none; transition: all 0.2s;
+}
+.custom-duration-input::placeholder { color: var(--text-3); font-size: 0.7rem; }
+.custom-duration-input:focus { border-color: var(--amber); color: var(--text-1); }
+.custom-duration-input:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* Categoría selector */
 .categoria-selector {
   display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: center; width: 100%;
