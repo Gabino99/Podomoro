@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
---  FOCVS — Esquema SQL para Supabase (v2)
+--  FOCUS — Esquema SQL para Supabase (v2)
 --  Ejecutar en: Supabase > SQL Editor > New Query
 --  Las sentencias usan IF NOT EXISTS / IF NOT EXISTS
 --  para que sea seguro correrlo en una DB ya existente.

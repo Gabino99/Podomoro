@@ -1,6 +1,6 @@
 {
-  "name": "FOCVS — Pomodoro Gamificado",
-  "short_name": "FOCVS",
+  "name": "FOCUS — Pomodoro Gamificado",
+  "short_name": "FOCUS",
   "description": "Temporizador Pomodoro gamificado. Concentráte y ganá puntos.",
   "start_url": "/",
   "display": "standalone",

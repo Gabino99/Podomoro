@@ -90,7 +90,7 @@ export default function App() {
       <header className="app-header">
         <div className="header-left">
           <span className="logo-icon">⬡</span>
-          <span className="logo-text">FOCVS</span>
+          <span className="logo-text">FOCUS</span>
         </div>
 
         <div className="header-center">
