@@ -114,9 +114,9 @@ export default function App() {
         <div className="header-right">
           <div className={`points-badge ${pointsAnim ? 'points-pop' : ''}`}>
             <span className="points-icon">⬡</span>
-            <span className="points-value">{puntos}</span>
+            <span className="points-value">{Math.floor(puntos)}</span>
           </div>
-          <button className="logout-btn" onClick={handleLogout} title="Cerrar sesión">↩</button>
+          <button className="logout-btn" onClick={handleLogout} title="Cerrar sesión">Salir</button>
         </div>
       </header>
 

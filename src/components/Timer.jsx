@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { PREMIOS, WORK_SESSIONS, BREAK_SESSIONS, CATEGORIAS, MAX_HISTORY } from '../lib/constants'
-import { playWorkComplete, playBreakComplete } from '../lib/sounds'
+import { playWorkComplete, playBreakComplete, setVolume, getVolume } from '../lib/sounds'
 
 function getNextPrize(puntos) {
   const sorted = [...PREMIOS].sort((a, b) => a.costo - b.costo)
@@ -74,6 +74,21 @@ function StreakBadge({ streak }) {
   return <div className="streak-badge" title={`${streak} días consecutivos`}>🔥 {streak} días</div>
 }
 
+function VolumeSlider() {
+  const [vol, setVol] = useState(getVolume)
+  const handleChange = (e) => {
+    const v = parseFloat(e.target.value)
+    setVol(v)
+    setVolume(v)
+  }
+  return (
+    <div className="volume-slider">
+      <span className="volume-icon">{vol === 0 ? '🔇' : vol < 0.5 ? '🔉' : '🔊'}</span>
+      <input type="range" min="0" max="1" step="0.05" value={vol} onChange={handleChange} />
+    </div>
+  )
+}
+
 export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange }) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
@@ -88,6 +103,8 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
   const [showBreakOffer, setShowBreakOffer] = useState(false)
   const [minutosHoy,     setMinutosHoy]     = useState(0)
   const [streak,         setStreak]         = useState(0)
+  const [autoMode,       setAutoMode]       = useState(() => localStorage.getItem('pomodoro_auto') === 'true')
+  const [pendingBreak,   setPendingBreak]   = useState(false)
 
   const intervalRef = useRef(null)
   const puntosRef   = useRef(puntos)
@@ -100,6 +117,21 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
     loadTodayStats()
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission()
   }, [userId])
+
+  // #2 — Atajo de teclado: Espacio para iniciar/pausar
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (isComplete) return
+        if (isRunning) handlePause()
+        else handleStart()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
 
   const loadTodayStats = async () => {
     const today = getTodayKey()
@@ -177,7 +209,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         { minutos: minutosGanados, hora: new Date().toLocaleTimeString(), tipo: currentMode === 'work' ? 'trabajo' : 'descanso', categoria },
         ...prev.slice(0, MAX_HISTORY - 1),
       ])
-      if (currentMode === 'work') { setMinutosHoy(m => m + minutosGanados); playWorkComplete(); setShowBreakOffer(true) }
+      if (currentMode === 'work') { setMinutosHoy(m => m + minutosGanados); playWorkComplete() }
       else playBreakComplete()
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('¡Sesión completada! ⬡', {
@@ -185,11 +217,29 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         })
       }
       clearTimerStorage(); setNota('')
+
+      // #10 — Auto-pomodoro
+      if (autoMode) {
+        if (currentMode === 'work') {
+          setShowBreakOffer(false)
+          setMode('break')
+          setSecondsLeft(breakDuration * 60)
+          setIsComplete(false)
+          setPendingBreak(true)
+        } else {
+          setMode('work')
+          setSecondsLeft(workDuration * 60)
+          setIsComplete(false)
+          setPendingBreak(true)
+        }
+      } else if (currentMode === 'work') {
+        setShowBreakOffer(true)
+      }
     } catch (err) {
       setError('Error al guardar: ' + err.message)
       if (currentMode === 'work') { setPuntos(currentPuntos); puntosRef.current = currentPuntos }
     }
-  }, [userId, setPuntos, categoria, nota])
+  }, [userId, setPuntos, categoria, nota, autoMode, breakDuration, workDuration])
 
   useEffect(() => {
     if (!isRunning) return
@@ -219,6 +269,14 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
     return () => clearInterval(intervalRef.current)
   }, [isRunning])
 
+  // pendingBreak triggers auto-start
+  useEffect(() => {
+    if (pendingBreak && !isRunning && !isComplete) {
+      setPendingBreak(false)
+      setIsRunning(true)
+    }
+  }, [pendingBreak, mode, isRunning, isComplete])
+
   const resetTimer = useCallback((newMode = mode, newWork = workDuration, newBreak = breakDuration) => {
     clearInterval(intervalRef.current); clearTimerStorage()
     setIsRunning(false); setIsComplete(false); setError(null); setShowBreakOffer(false)
@@ -230,9 +288,13 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
   const handleModeChange = (newMode) => { setMode(newMode); resetTimer(newMode) }
   const handleWorkDurationChange  = (m) => { if (isRunning) return; setWorkDuration(m);  if (mode === 'work')  { setSecondsLeft(m * 60); setIsComplete(false) } }
   const handleBreakDurationChange = (m) => { if (isRunning) return; setBreakDuration(m); if (mode === 'break') { setSecondsLeft(m * 60); setIsComplete(false) } }
-  const [pendingBreak, setPendingBreak] = useState(false)
   const startBreakNow = () => { setShowBreakOffer(false); setMode('break'); setSecondsLeft(breakDuration * 60); setIsComplete(false); setPendingBreak(true) }
-  useEffect(() => { if (pendingBreak && mode === 'break' && !isRunning) { setPendingBreak(false); setIsRunning(true) } }, [pendingBreak, mode])
+
+  const toggleAutoMode = () => {
+    const next = !autoMode
+    setAutoMode(next)
+    localStorage.setItem('pomodoro_auto', next.toString())
+  }
 
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0')
   const seconds = (secondsLeft % 60).toString().padStart(2, '0')
@@ -269,7 +331,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
       </div>
 
       {mode === 'work' && !isRunning && !isComplete && (
-        <div className="categoria-selector">
+        <div className="categoria-selector show-labels">
           {CATEGORIAS.map(c => (
             <button key={c.id} className={`cat-btn ${categoria === c.id ? 'active' : ''}`}
               onClick={() => setCategoria(c.id)} title={c.label}>
@@ -279,7 +341,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         </div>
       )}
 
-      <div className="timer-circle-wrapper">
+      <div className={`timer-circle-wrapper ${isRunning ? 'running' : ''}`}>
         <svg className="timer-svg" viewBox="0 0 300 300">
           <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
           <circle
@@ -328,6 +390,16 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         </div>
       )}
 
+      {!isRunning && !isComplete && (
+        <div className="timer-settings-row">
+          <button className={`auto-mode-btn ${autoMode ? 'active' : ''}`} onClick={toggleAutoMode}>
+            {autoMode ? '🔄 Auto' : '🔄 Manual'}
+          </button>
+          <VolumeSlider />
+          <span className="shortcut-hint">Espacio = iniciar/pausar</span>
+        </div>
+      )}
+
       {mode === 'work' && !isRunning && !isComplete && (
         <div className="nota-input-wrapper">
           <input className="nota-input" type="text"
@@ -336,7 +408,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         </div>
       )}
 
-      {sessionHistory.length > 0 && (
+      {sessionHistory.length > 0 ? (
         <div className="session-history">
           <p className="history-title">Sesiones de hoy</p>
           {sessionHistory.map((s, i) => (
@@ -346,6 +418,13 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
             </div>
           ))}
         </div>
+      ) : (
+        !isRunning && !isComplete && minutosHoy === 0 && (
+          <div className="welcome-empty">
+            <p>¡Empezá tu primera sesión del día!</p>
+            <p className="welcome-sub">Elegí una duración y dale Iniciar (o presioná Espacio)</p>
+          </div>
+        )
       )}
     </div>
   )
