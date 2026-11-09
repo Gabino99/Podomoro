@@ -1,16 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { PREMIOS, WORK_SESSIONS, BREAK_SESSIONS, CATEGORIAS, MAX_HISTORY } from '../lib/constants'
+import { WORK_SESSIONS, BREAK_SESSIONS, CATEGORIAS, MAX_HISTORY } from '../lib/constants'
 import { playWorkComplete, playBreakComplete, setVolume, getVolume } from '../lib/sounds'
-
-function getNextPrize(puntos) {
-  const sorted = [...PREMIOS].sort((a, b) => a.costo - b.costo)
-  return sorted.find(p => p.costo > puntos) || null
-}
-
-function getTodayKey() {
-  return new Date().toISOString().split('T')[0]
-}
+import { proximaMeta } from '../lib/useRecompensas'
+import { fechaCR, diasHasta } from '../lib/fechas'
 
 function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   const [editing, setEditing] = useState(false)
@@ -51,16 +44,22 @@ function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   )
 }
 
-function NextPrizeBanner({ puntos }) {
-  const next = getNextPrize(puntos)
-  if (!next) return <div className="next-prize-banner all-unlocked">🏆 ¡Tenés puntos para todo!</div>
+function NextPrizeBanner({ puntos, recompensas }) {
+  if (recompensas.length === 0) {
+    return <div className="next-prize-banner all-unlocked">🎁 Cree su primera recompensa en la pestaña Recompensas</div>
+  }
+  const next = proximaMeta(recompensas, puntos)
+  if (!next) return <div className="next-prize-banner all-unlocked">🏆 ¡Tiene puntos para todo!</div>
   const falta = next.costo - puntos
   const pct   = Math.min((puntos / next.costo) * 100, 100)
+  const dias  = diasHasta(next.fecha_limite)
   return (
     <div className="next-prize-banner">
       <div className="next-prize-info">
         <span>{next.emoji} {next.nombre}</span>
-        <span className="next-prize-falta">faltan {falta} pts</span>
+        <span className="next-prize-falta">
+          faltan {falta} pts{dias !== null && dias >= 0 ? ` · ${dias} d` : ''}
+        </span>
       </div>
       <div className="next-prize-track">
         <div className="next-prize-fill" style={{ width: `${pct}%` }} />
@@ -89,7 +88,7 @@ function VolumeSlider() {
   )
 }
 
-export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange }) {
+export default function Timer({ userId, puntos, setPuntos, recompensas = [], metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange }) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
   const [breakDuration,  setBreakDuration]  = useState(5)
@@ -134,10 +133,10 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
   }, [isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
 
   const loadTodayStats = async () => {
-    const today = getTodayKey()
+    const today = fechaCR()
     const desde = new Date()
     desde.setDate(desde.getDate() - 31)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('sesiones')
       .select('duracion_minutos, created_at')
       .eq('user_id', userId)
@@ -145,14 +144,16 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
       .eq('completada', true)
       .gte('created_at', desde.toISOString())
 
+    if (error) { console.error(error); return }
     if (data) {
-      const hoyMin = data.filter(s => s.created_at?.startsWith(today)).reduce((a, s) => a + s.duracion_minutos, 0)
-      setMinutosHoy(hoyMin)
+      // Se agrupa por día de Costa Rica (no UTC)
+      const dias = data.map(r => ({ dia: fechaCR(r.created_at), min: r.duracion_minutos }))
+      setMinutosHoy(dias.filter(r => r.dia === today).reduce((a, r) => a + r.min, 0))
+      const conSesion = new Set(dias.map(r => r.dia))
       let s = 0
       for (let i = 0; i < 30; i++) {
         const d = new Date(); d.setDate(d.getDate() - i)
-        const day = d.toISOString().split('T')[0]
-        if (data.some(r => r.created_at?.startsWith(day))) s++
+        if (conSesion.has(fechaCR(d))) s++
         else if (i > 0) break
       }
       setStreak(s)
@@ -190,21 +191,20 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
   const progress     = useMemo(() => ((totalSeconds - secondsLeft) / totalSeconds) * 100, [totalSeconds, secondsLeft])
 
   const completeSession = useCallback(async (currentMode, minutosGanados) => {
-    const currentPuntos = puntosRef.current
     try {
-      let nuevosPuntos = currentPuntos
-      if (currentMode === 'work') {
-        nuevosPuntos = currentPuntos + minutosGanados
-        setPuntos(nuevosPuntos)
-        puntosRef.current = nuevosPuntos
-      }
-      await supabase.from('perfiles').update({ puntos_totales: nuevosPuntos }).eq('user_id', userId)
-      await supabase.from('sesiones').insert({
-        user_id: userId, duracion_minutos: minutosGanados,
-        tipo: currentMode === 'work' ? 'trabajo' : 'descanso',
-        completada: true, categoria: currentMode === 'work' ? categoria : 'descanso',
-        nota: nota.trim() || null,
+      // El servidor guarda la sesión y suma los puntos en un solo paso.
+      const { data, error: rpcError } = await supabase.rpc('registrar_sesion', {
+        p_duracion:  minutosGanados,
+        p_tipo:      currentMode === 'work' ? 'trabajo' : 'descanso',
+        p_categoria: currentMode === 'work' ? categoria : 'descanso',
+        p_nota:      nota.trim() || null,
       })
+      if (rpcError || !data?.exito) throw rpcError || new Error('respuesta inválida')
+
+      if (currentMode === 'work') {
+        setPuntos(data.puntos_totales)
+        puntosRef.current = data.puntos_totales
+      }
       setSessionHistory(prev => [
         { minutos: minutosGanados, hora: new Date().toLocaleTimeString(), tipo: currentMode === 'work' ? 'trabajo' : 'descanso', categoria },
         ...prev.slice(0, MAX_HISTORY - 1),
@@ -236,8 +236,8 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
         setShowBreakOffer(true)
       }
     } catch (err) {
-      setError('Error al guardar: ' + err.message)
-      if (currentMode === 'work') { setPuntos(currentPuntos); puntosRef.current = currentPuntos }
+      console.error(err)
+      setError('No se pudo guardar la sesión, así que los puntos no se sumaron. Revise su conexión.')
     }
   }, [userId, setPuntos, categoria, nota, autoMode, breakDuration, workDuration])
 
@@ -308,7 +308,7 @@ export default function Timer({ userId, puntos, setPuntos, metaDiaria, onUpdateM
 
       <div className="timer-top-row">
         <StreakBadge streak={streak} />
-        <NextPrizeBanner puntos={puntos} />
+        <NextPrizeBanner puntos={puntos} recompensas={recompensas} />
       </div>
 
       <DailyGoalBar minutosHoy={minutosHoy} meta={metaDiaria} onChangeMeta={onUpdateMeta} />

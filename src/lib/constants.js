@@ -1,3 +1,5 @@
+// Recompensas de ejemplo: solo se usan si el usuario pulsa "cargar ejemplos".
+// Las recompensas reales viven en la tabla `recompensas` de Supabase.
 export const PREMIOS = [
   { id: 1, nombre: 'Jugar Clash Royale', descripcion: '30 minutos de juego', costo: 240, emoji: '⚔️' },
   { id: 2, nombre: 'Salir a Ococa',      descripcion: 'Una salida merecida',  costo: 500, emoji: '🌿' },

@@ -550,3 +550,34 @@ input  { font-family: inherit; }
   .shortcut-hint { display: none; }
 }
 
+
+/* ── Recompensas personalizadas ───────────────────── */
+.reward-new { align-self: flex-start; }
+.reward-form {
+  display: flex; flex-direction: column; gap: 0.75rem; padding: 1.1rem;
+  background: var(--bg-2); border: 1px solid var(--border-active); border-radius: var(--radius);
+  animation: slideUp 0.25s ease;
+}
+.emoji-picker { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.emoji-opt {
+  width: 38px; height: 38px; font-size: 1.2rem; border-radius: var(--radius-sm);
+  background: var(--bg-3); border: 1px solid var(--border); transition: all 0.15s;
+}
+.emoji-opt:hover { border-color: var(--border-active); }
+.emoji-opt.active { border-color: var(--amber); background: var(--amber-glow); }
+.reward-input {
+  width: 100%; padding: 0.6rem 0.75rem; border-radius: var(--radius-sm);
+  background: var(--bg-3); border: 1px solid var(--border); color: inherit; font: inherit;
+}
+.reward-input:focus { outline: none; border-color: var(--amber); }
+.reward-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.reward-label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; color: var(--muted); }
+.reward-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--muted); }
+.reward-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.prize-top { display: flex; justify-content: space-between; align-items: flex-start; }
+.prize-tools { display: flex; gap: 0.1rem; opacity: 0.55; }
+.prize-card:hover .prize-tools { opacity: 1; }
+.prize-deadline { font-size: 0.72rem; color: var(--amber); margin-top: 0.35rem; font-family: var(--font-mono); }
+.prize-deadline.vencida { color: var(--red); }
+.store-empty { display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; color: var(--muted); font-size: 0.9rem; }
+@media (max-width: 600px) { .reward-row { grid-template-columns: 1fr; } }

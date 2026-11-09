@@ -4,6 +4,7 @@ import Auth from './components/Auth'
 import Timer from './components/Timer'
 import Store from './components/Store'
 import Stats from './components/Stats'
+import { useRecompensas } from './lib/useRecompensas'
 
 export default function App() {
   const [session,  setSession]  = useState(null)
@@ -12,7 +13,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('timer')
   const [loading,  setLoading]  = useState(true)
   const [pointsAnim, setPointsAnim] = useState(false)
+  const [errorMeta, setErrorMeta] = useState(null)
   const prevPuntosRef = useRef(0)
+  const recompensasApi = useRecompensas(session?.user?.id)
 
   // Animar badge cuando suben puntos
   useEffect(() => {
@@ -52,19 +55,24 @@ export default function App() {
       .eq('user_id', userId)
       .maybeSingle()
 
+    let fallo = error
     if (!data && !error) {
       const { data: newPerfil, error: insertError } = await supabase
         .from('perfiles')
         .insert({ user_id: userId, puntos_totales: 0, meta_diaria_minutos: 120 })
         .select()
         .maybeSingle()
-      if (!insertError) data = newPerfil
+      if (insertError) fallo = insertError
+      else data = newPerfil
     }
 
     if (data) {
       setPerfil(data)
       setPuntos(data.puntos_totales)
       prevPuntosRef.current = data.puntos_totales
+    } else if (fallo) {
+      console.error('No se pudo cargar el perfil', fallo)
+      setErrorMeta('No se pudo cargar su perfil. Revise la conexión y recargue la página.')
     }
     setLoading(false)
   }
@@ -97,7 +105,7 @@ export default function App() {
           <nav className="main-nav">
             {[
               { id: 'timer', label: 'Temporizador' },
-              { id: 'store', label: 'Tienda'       },
+              { id: 'store', label: 'Recompensas'  },
               { id: 'stats', label: 'Estadísticas' },
             ].map(({ id, label }) => (
               <button
@@ -121,20 +129,29 @@ export default function App() {
       </header>
 
       <main className="app-main">
+        {errorMeta && (
+          <div className="error-message">{errorMeta}
+            <button className="btn-ghost small" onClick={() => setErrorMeta(null)}>✕</button>
+          </div>
+        )}
         {activeTab === 'timer' && (
           <Timer
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
+            recompensas={recompensasApi.recompensas}
             metaDiaria={perfil?.meta_diaria_minutos ?? 120}
             onUpdateMeta={async (mins) => {
+              const { error } = await supabase.rpc('actualizar_meta_diaria', {
+                p_user_id: session.user.id, p_meta: mins,
+              })
+              if (error) { setErrorMeta('No se pudo guardar la meta diaria.'); return }
               setPerfil(p => ({ ...p, meta_diaria_minutos: mins }))
-              await supabase.from('perfiles').update({ meta_diaria_minutos: mins }).eq('user_id', session.user.id)
             }}
           />
         )}
         {activeTab === 'store' && (
-          <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} />
+          <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} {...recompensasApi} />
         )}
         {activeTab === 'stats' && (
           <Stats userId={session.user.id} />
