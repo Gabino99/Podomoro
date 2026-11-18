@@ -80,11 +80,30 @@ SELECT status_code, content FROM net._http_response ORDER BY created DESC LIMIT 
 SELECT origen, contenido, puntos, created_at FROM public.misiones ORDER BY created_at DESC LIMIT 10;
 ```
 
+## Etapa 3: modo enfoque, contexto y tareas zombi
+
+- **🎯 Modo enfoque (tecla F):** arranca un pomodoro con la misión actual. Usa la duración de la
+  tarea si tiene entre 5 y 90 min; si no, la última duración usada. Al terminar pregunta
+  "¿La terminó?": Sí la completa en Todoist (con sus puntos), Todavía no la deja amarrada para
+  el siguiente pomodoro. El pomodoro suma sus puntos aparte (1 por minuto), como siempre.
+- El Temporizador ya no se apaga al cambiar de pestaña: si termina mientras está en Misiones,
+  la sesión igual se guarda.
+- **🧠 Contexto:** caja en cada misión. Se guarda como comentario "🧠 Contexto: …" en Todoist
+  (si ya existe, se actualiza; no se duplica). Ctrl+Enter también guarda.
+- **🧟 Zombi:** tarea normal con 3 o más comentarios "🔁 Reprogramada". No se puede posponer
+  otra vez hasta que se parta en pasos o se suelte. Si se termina con el botón Hecho o con el
+  Modo enfoque, vale ×1.5 (se acumula con jefe: ×2.25). Los hábitos nunca son zombis.
+  Nota: el bono zombi no aplica a lo completado fuera de la app.
+- **🧩 Partir en pasos:** un paso por línea; se crean como subtareas para hoy con la misma prioridad.
+- **🗑️ Soltar:** P4, etiqueta 🗑️_Superflua y fecha a +30 días, con comentario para el coach.
+
+Instalación: solo volver a desplegar la función `todoist` (no hay SQL nuevo).
+
 ## Atajos de teclado (en la pestaña Misiones)
-`C` completar · `P` posponer · `S` saltar · `D` eliminar · `Esc` cerrar menú
+`C` completar · `P` posponer · `S` saltar · `D` eliminar · `F` modo enfoque · `Esc` cerrar menú
 
 ## Próximas etapas
 2. ✅ Puntos por lo que complete fuera de la app (app de Todoist, coach).
-3. Pomodoro amarrado a la misión, contexto por tarea y tareas zombi.
+3. ✅ Pomodoro amarrado a la misión, contexto por tarea y tareas zombi.
 4. Gamificación completa: combo, cofres, retos, insignias, jefe de proyecto y estadísticas.
 5. Google Calendar y Spotify.

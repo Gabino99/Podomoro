@@ -88,7 +88,14 @@ function VolumeSlider() {
   )
 }
 
-export default function Timer({ userId, puntos, setPuntos, recompensas = [], metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange }) {
+export default function Timer({
+  userId, puntos, setPuntos, recompensas = [], metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
+  activo = true,             // la pestaña está a la vista (el Temporizador sigue vivo aunque no lo esté)
+  mision = null,             // misión de Todoist amarrada al pomodoro (Modo enfoque)
+  inicioFoco = 0,            // sube cada vez que se pide "Modo enfoque" desde Misiones
+  onTerminarMision,          // async (mision) => respuesta de la Edge Function
+  onSoltarMision,
+}) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
   const [breakDuration,  setBreakDuration]  = useState(5)
@@ -104,9 +111,14 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
   const [streak,         setStreak]         = useState(0)
   const [autoMode,       setAutoMode]       = useState(() => localStorage.getItem('pomodoro_auto') === 'true')
   const [pendingBreak,   setPendingBreak]   = useState(false)
+  const [preguntaMision, setPreguntaMision] = useState(false)   // "¿La terminó?" al acabar el pomodoro
+  const [cerrandoMision, setCerrandoMision] = useState(false)
+  const [avisoMision,    setAvisoMision]    = useState(null)
 
   const intervalRef = useRef(null)
   const puntosRef   = useRef(puntos)
+  const misionRef   = useRef(mision)
+  useEffect(() => { misionRef.current = mision; if (!mision) setPreguntaMision(false) }, [mision])
 
   useEffect(() => { puntosRef.current = puntos }, [puntos])
   useEffect(() => { onRunningChange?.(isRunning)  }, [isRunning])
@@ -120,6 +132,7 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
   // #2 — Atajo de teclado: Espacio para iniciar/pausar
   useEffect(() => {
     const handleKey = (e) => {
+      if (!activo) return
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
       if (e.code === 'Space') {
         e.preventDefault()
@@ -130,7 +143,7 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
+  }, [activo, isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
 
   const loadTodayStats = async () => {
     const today = fechaCR()
@@ -218,6 +231,13 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
       }
       clearTimerStorage(); setNota('')
 
+      // Modo enfoque: antes de seguir, preguntar si la misión quedó terminada.
+      if (currentMode === 'work' && misionRef.current) {
+        setShowBreakOffer(false)
+        setPreguntaMision(true)
+        return
+      }
+
       // #10 — Auto-pomodoro
       if (autoMode) {
         if (currentMode === 'work') {
@@ -277,6 +297,40 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
     }
   }, [pendingBreak, mode, isRunning, isComplete])
 
+  // Modo enfoque: cada vez que Misiones pide enfocar, arranca un pomodoro con la misión.
+  // Si ya hay uno corriendo, no lo interrumpe: la misión queda amarrada a ese.
+  useEffect(() => {
+    if (!inicioFoco || !misionRef.current) return
+    const m = misionRef.current
+    setAvisoMision(null); setPreguntaMision(false)
+    setNota((m.contenido || '').slice(0, 120))
+    if (isRunning) return
+    const dur = m.duracion >= 5 && m.duracion <= 90 ? m.duracion : workDuration
+    clearInterval(intervalRef.current); clearTimerStorage()
+    setMode('work'); setWorkDuration(dur); setSecondsLeft(dur * 60)
+    setIsComplete(false); setShowBreakOffer(false); setError(null)
+    setPendingBreak(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inicioFoco])
+
+  const responderMision = async (terminada) => {
+    const m = misionRef.current
+    if (!terminada || !m) { setPreguntaMision(false); setShowBreakOffer(true); return }
+    if (cerrandoMision) return
+    setCerrandoMision(true)
+    try {
+      const r = await onTerminarMision?.(m)
+      if (r?.ok === false && r?.motivo === 'ya_completada') setAvisoMision('Esa misión ya estaba completada en Todoist.')
+      else setAvisoMision(`✅ «${m.contenido}» completada: +${r?.puntos_ganados ?? 0} pts${r?.zombi ? ' (zombi ×1.5)' : ''}`)
+      onSoltarMision?.()
+      setPreguntaMision(false); setShowBreakOffer(true)
+    } catch (e) {
+      setError(`No se pudo completar en Todoist: ${e.message}`)
+    } finally {
+      setCerrandoMision(false)
+    }
+  }
+
   const resetTimer = useCallback((newMode = mode, newWork = workDuration, newBreak = breakDuration) => {
     clearInterval(intervalRef.current); clearTimerStorage()
     setIsRunning(false); setIsComplete(false); setError(null); setShowBreakOffer(false)
@@ -312,6 +366,26 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
       </div>
 
       <DailyGoalBar minutosHoy={minutosHoy} meta={metaDiaria} onChangeMeta={onUpdateMeta} />
+
+      {mision && (
+        <div className="foco-mision">
+          <div className="foco-mision-info">
+            <div className="foco-mision-etq">🎯 Misión en foco{mision.zombi ? ' · 🧟 zombi ×1.5' : ''}</div>
+            <div className="foco-mision-nombre">{mision.contenido}</div>
+            <div className="foco-mision-meta">
+              {mision.proyecto || 'Inbox'}{mision.duracion ? ` · ⏱️ ${mision.duracion} min` : ''}
+            </div>
+          </div>
+          {!preguntaMision && (
+            <button className="btn-ghost small" onClick={() => onSoltarMision?.()} title="Soltar la misión (el pomodoro sigue)">✕</button>
+          )}
+        </div>
+      )}
+      {avisoMision && !mision && (
+        <div className="next-prize-banner all-unlocked">{avisoMision}
+          <button className="btn-ghost small" onClick={() => setAvisoMision(null)}>✕</button>
+        </div>
+      )}
 
       <div className="mode-toggle">
         <button className={`mode-btn ${mode === 'work'  ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
@@ -385,6 +459,19 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
         </div>
       </div>
 
+      {preguntaMision && mision && (
+        <div className="foco-pregunta">
+          <p>⏱️ ¡Pomodoro terminado! ¿Terminó «{mision.contenido}»?</p>
+          <div className="foco-pregunta-acciones">
+            <button className="foco-si" onClick={() => responderMision(true)} disabled={cerrandoMision}>
+              {cerrandoMision ? 'Completando…' : '✅ Sí, la terminé'}
+            </button>
+            <button className="btn-secondary" onClick={() => responderMision(false)} disabled={cerrandoMision}>⏳ Todavía no</button>
+            <button className="btn-ghost" onClick={() => { onSoltarMision?.(); setPreguntaMision(false); setShowBreakOffer(true) }} disabled={cerrandoMision}>Soltar misión</button>
+          </div>
+        </div>
+      )}
+
       {showBreakOffer && (
         <div className="break-offer">
           <p>¡Trabajo completado! ¿Empezar descanso de {breakDuration} min?</p>
@@ -395,7 +482,7 @@ export default function Timer({ userId, puntos, setPuntos, recompensas = [], met
         </div>
       )}
 
-      {!showBreakOffer && (
+      {!showBreakOffer && !preguntaMision && (
         <div className="timer-controls">
           {!isRunning && !isComplete && (
             <button className="btn-primary large" onClick={handleStart}>

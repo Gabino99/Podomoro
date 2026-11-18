@@ -26,7 +26,7 @@ function sonar(tipo = 'hecho') {
 const ANIMOS = ['¡Eso es! Una menos 💥', '¡Qué nivel! 🔥', 'Misión cumplida 🏅', '¡Imparable! 🚀', 'Su yo del futuro le agradece 🙌', '¡Tuanis! Siga así 🎯']
 const etiqueta = (l) => l.replace(/_/g, ' ')
 
-export default function Misiones({ puntos, setPuntos }) {
+export default function Misiones({ puntos, setPuntos, onEnfocar }) {
   const [tareas, setTareas]       = useState([])
   const [proyectos, setProyectos] = useState({})
   const [cargando, setCargando]   = useState(true)
@@ -39,6 +39,10 @@ export default function Misiones({ puntos, setPuntos }) {
   const [aviso, setAviso]         = useState(null)
   const [flotante, setFlotante]   = useState(null)
   const [pendientes, setPendientes] = useState(0)
+  const [detalles, setDetalles]   = useState({})        // id -> { contexto, reprogramadas, zombi, subtareas }
+  const [ctxTexto, setCtxTexto]   = useState('')
+  const [ctxEstado, setCtxEstado] = useState('')        // '' | 'guardando' | 'guardado'
+  const [pasosTexto, setPasosTexto] = useState('')
   const enCurso = useRef(new Set())        // ids con una acción viajando a Todoist
   const ocultas = useRef(new Map())        // id -> ms: no mostrarlas aunque una recarga las traiga
   const avisoT = useRef(null)
@@ -103,6 +107,33 @@ export default function Misiones({ puntos, setPuntos }) {
     return lista.find(t => t.id === actualId) || lista.find(t => !saltadas.has(t.id)) || lista[0] || null
   }, [lista, actualId, saltadas])
 
+  // ── Detalle de la misión actual: contexto, veces pospuesta (zombi) y pasos ──
+  const det = actual ? detalles[actual.id] : null
+  const zombiDe = (t) => !!detalles[t.id]?.zombi
+  useEffect(() => {
+    if (!actual) return
+    setMenu(m => (m === 'zombi' || m === 'partir') ? null : m)
+    setCtxTexto(detalles[actual.id]?.contexto ?? ''); setCtxEstado(''); setPasosTexto('')
+    if (detalles[actual.id]) return
+    let vivo = true
+    llamarTodoist('detalle', { id: actual.id })
+      .then(d => { if (vivo) { setDetalles(p => ({ ...p, [actual.id]: d })); setCtxTexto(t => t || d.contexto || '') } })
+      .catch(() => { /* el detalle es opcional */ })
+    return () => { vivo = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actual?.id])
+
+  const guardarContexto = async () => {
+    if (!actual || !ctxTexto.trim() || ctxEstado === 'guardando') return
+    const id = actual.id
+    setCtxEstado('guardando')
+    try {
+      await llamarTodoist('contexto', { id, texto: ctxTexto })
+      setDetalles(p => ({ ...p, [id]: { ...(p[id] || {}), contexto: ctxTexto.trim() } }))
+      setCtxEstado('guardado')
+    } catch (e) { setCtxEstado(''); setError(e.message) }
+  }
+
   // ── Acciones: la tarea se mueve en pantalla al instante y Todoist se actualiza por detrás ──
   const ejecutar = useCallback(async (t, accion, datos, alFallar) => {
     enCurso.current.add(t.id); setPendientes(enCurso.current.size)
@@ -127,7 +158,7 @@ export default function Misiones({ puntos, setPuntos }) {
 
   const completar = useCallback(async (t) => {
     if (!t || enCurso.current.has(t.id)) return
-    const estimado = puntosDe(t, hoy)
+    const estimado = puntosDe(t, hoy, zombiDe(t))
     quitar(t)
     sonar('hecho')
     setFlotante(`+${estimado}`); setTimeout(() => setFlotante(null), 1200)
@@ -137,7 +168,34 @@ export default function Misiones({ puntos, setPuntos }) {
     if (r.ok === false && r.motivo === 'ya_completada') { mostrarAviso('Esa ya estaba completada en Todoist.'); return }
     if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
     if (r.error_puntos) setError('Se completó en Todoist, pero no se pudieron sumar los puntos: ' + r.error_puntos)
-  }, [ejecutar, hoy, mostrarAviso, setPuntos])
+  }, [ejecutar, hoy, mostrarAviso, setPuntos, detalles])
+
+  // Posponer: si es zombi (3+ veces) y no tiene pasos, primero hay que partirla o soltarla.
+  const abrirPosponer = useCallback(() => {
+    if (!actual) return
+    const d = detalles[actual.id]
+    if (d?.zombi && !d.subtareas) setMenu(m => m === 'zombi' ? null : 'zombi')
+    else setMenu(m => m === 'posponer' ? null : 'posponer')
+  }, [actual, detalles])
+
+  const partir = useCallback(async (t) => {
+    const pasos = pasosTexto.split('\n').map(s => s.trim()).filter(Boolean)
+    if (!t || pasos.length < 2 || enCurso.current.has(t.id)) { mostrarAviso('Escriba al menos 2 pasos, uno por línea.'); return }
+    setMenu(null); setPasosTexto('')
+    const r = await ejecutar(t, 'partir', { pasos })
+    if (!r?.creadas) return
+    setTareas(prev => [...prev, ...r.creadas.filter(c => !prev.some(z => z.id === c.id))])
+    setDetalles(p => ({ ...p, [t.id]: { ...(p[t.id] || {}), subtareas: (p[t.id]?.subtareas || 0) + r.creadas.length } }))
+    setActualId(r.creadas[0].id)
+    mostrarAviso(`🧩 Partida en ${r.creadas.length} pasos. Empiece por el primero.`)
+  }, [ejecutar, mostrarAviso, pasosTexto])
+
+  const soltar = useCallback(async (t) => {
+    if (!t || enCurso.current.has(t.id)) return
+    quitar(t)
+    mostrarAviso('🗑️ Soltada: P4, 🗑️ Superflua y fuera de su vista por 30 días.')
+    await ejecutar(t, 'soltar')
+  }, [ejecutar, mostrarAviso])
 
   const posponer = useCallback(async (t, fecha, texto) => {
     if (!t || enCurso.current.has(t.id) || !fecha) return
@@ -174,14 +232,15 @@ export default function Misiones({ puntos, setPuntos }) {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return
       const k = e.key.toLowerCase()
       if (k === 'c' && actual) completar(actual)
-      else if (k === 'p' && actual) setMenu(m => m === 'posponer' ? null : 'posponer')
+      else if (k === 'p' && actual) abrirPosponer()
       else if (k === 's') saltar()
       else if (k === 'd' && actual) setMenu(m => m === 'borrar' ? null : 'borrar')
+      else if (k === 'f' && actual && onEnfocar) onEnfocar({ ...actual, proyecto: proyectos[actual.proyecto_id] || null, zombi: zombiDe(actual) })
       else if (k === 'escape') setMenu(null)
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [actual, completar, saltar])
+  }, [actual, completar, saltar, abrirPosponer, onEnfocar, proyectos, detalles])
 
   // ── Vista ──
   const conteoProy = useMemo(() => {
@@ -214,7 +273,8 @@ export default function Misiones({ puntos, setPuntos }) {
                 {esJefe(actual, hoy) ? <span className="mis-tag jefe">👹 JEFE VENCIDO</span> : <span className="mis-tag">⚔️ MISIÓN</span>}
                 {actual.prioridad < 4 && <span className={`mis-tag p${actual.prioridad}`}>P{actual.prioridad}</span>}
                 {actual.due?.recurrente && <span className="mis-tag">🔁 HÁBITO</span>}
-                <span className="mis-tag pts">+{puntosDe(actual, hoy)} pts</span>
+                {det?.zombi && <span className="mis-tag zombi" title="Pospuesta 3 veces o más: terminarla vale x1.5">🧟 ZOMBI ×{det.reprogramadas}</span>}
+                <span className="mis-tag pts">+{puntosDe(actual, hoy, det?.zombi)} pts</span>
               </div>
               <h2 className="mis-titulo">{actual.contenido}</h2>
               <div className="mis-meta">
@@ -226,6 +286,49 @@ export default function Misiones({ puntos, setPuntos }) {
                 <div className="mis-etiquetas">{actual.etiquetas.map(l => <span key={l}>{etiqueta(l)}</span>)}</div>
               )}
               {actual.descripcion && <div className="mis-desc">{actual.descripcion}</div>}
+
+              <div className="mis-contexto">
+                <div className="mis-contexto-titulo">
+                  🧠 Contexto
+                  {ctxEstado === 'guardado' && <span>✓ guardado en Todoist</span>}
+                  {ctxEstado === 'guardando' && <span>guardando…</span>}
+                </div>
+                <textarea
+                  value={ctxTexto}
+                  onChange={e => { setCtxTexto(e.target.value); setCtxEstado('') }}
+                  onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) guardarContexto() }}
+                  placeholder="¿Dónde se quedó? ¿Qué falta? ¿Qué necesita para arrancar?"
+                  maxLength={2000} rows={2} />
+                <div className="mis-contexto-fila">
+                  <button onClick={guardarContexto} disabled={!ctxTexto.trim() || ctxEstado === 'guardando' || ctxTexto.trim() === (det?.contexto ?? '')}>💾 Guardar</button>
+                </div>
+              </div>
+
+              {menu === 'zombi' && (
+                <div className="mis-menu zombi">
+                  <div className="mis-menu-titulo">🧟 Esta tarea ya se pospuso {det?.reprogramadas} veces</div>
+                  <div className="mis-menu-aviso">
+                    Para moverla otra vez, pártala en pasos más pequeños o suéltela.
+                    Si la termina hoy, vale ×1.5.
+                  </div>
+                  <div className="mis-menu-fila">
+                    <button onClick={() => setMenu('partir')}>🧩 Partir en pasos</button>
+                    <button onClick={() => soltar(actual)}>🗑️ Soltarla (P4, 30 días)</button>
+                    <button onClick={() => setMenu(null)}>✕</button>
+                  </div>
+                </div>
+              )}
+              {menu === 'partir' && (
+                <div className="mis-menu">
+                  <div className="mis-menu-titulo">🧩 Un paso por línea (quedan para hoy)</div>
+                  <textarea className="mis-pasos" value={pasosTexto} onChange={e => setPasosTexto(e.target.value)} rows={4}
+                    placeholder={'Abrir el documento\nEscribir el primer párrafo\nEnviarlo'} autoFocus />
+                  <div className="mis-menu-fila derecha">
+                    <button onClick={() => setMenu(null)}>Cancelar</button>
+                    <button onClick={() => partir(actual)} disabled={pasosTexto.split('\n').filter(s => s.trim()).length < 2}>Crear pasos</button>
+                  </div>
+                </div>
+              )}
 
               {menu === 'posponer' && (
                 <div className="mis-menu">
@@ -257,9 +360,17 @@ export default function Misiones({ puntos, setPuntos }) {
 
               <div className="mis-acciones">
                 <button className="mis-btn hecho" onClick={() => completar(actual)}>✅ ¡Hecho!<small>tecla C</small></button>
-                <button className="mis-btn posponer" onClick={() => setMenu(m => m === 'posponer' ? null : 'posponer')}>⏰ Posponer<small>tecla P</small></button>
+                <button className="mis-btn posponer" onClick={abrirPosponer}>⏰ Posponer<small>tecla P</small></button>
                 <button className="mis-btn saltar" onClick={saltar}>⏭️ Saltar<small>tecla S</small></button>
                 <button className="mis-btn borrar" onClick={() => setMenu(m => m === 'borrar' ? null : 'borrar')}>🗑️ Eliminar<small>tecla D</small></button>
+              </div>
+              <div className="mis-acciones2">
+                {onEnfocar && (
+                  <button onClick={() => onEnfocar({ ...actual, proyecto: proyectos[actual.proyecto_id] || null, zombi: !!det?.zombi })}>
+                    🎯 Modo enfoque <small>F</small>
+                  </button>
+                )}
+                <button onClick={() => setMenu(m => m === 'partir' ? null : 'partir')}>🧩 Partir en pasos</button>
               </div>
             </>
           )}
@@ -290,7 +401,7 @@ export default function Misiones({ puntos, setPuntos }) {
                   <div className="mis-item-nombre">{t.contenido}</div>
                   <div className="mis-item-meta">{esJefe(t, hoy) ? '👹 ' : ''}{cuandoTexto(t, hoy)} · {proyectos[t.proyecto_id] || ''}</div>
                 </div>
-                <div className="mis-item-pts">+{puntosDe(t, hoy)}</div>
+                <div className="mis-item-pts">+{puntosDe(t, hoy, zombiDe(t))}</div>
               </button>
             ))}
           </div>

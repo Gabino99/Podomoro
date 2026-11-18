@@ -24,10 +24,12 @@ export const diaDe = (t) => (t.due?.date || '').slice(0, 10)
 export const tieneHora = (t) => (t.due?.date || '').length > 10
 export const esJefe = (t, hoy = fechaCR()) => !!diaDe(t) && diaDe(t) < hoy
 
-export function puntosDe(t, hoy = fechaCR()) {
+// zombi: pospuesta 3+ veces; terminarla vale x1.5 (se acumula con jefe). Tope 150, como el servidor.
+export function puntosDe(t, hoy = fechaCR(), zombi = false) {
   const base = { 1: 40, 2: 25, 3: 15, 4: 10 }[t.prioridad] ?? 10
   const bono = t.duracion ? Math.min(30, Math.round(t.duracion / 5)) : 5
-  return Math.round((base + bono) * (esJefe(t, hoy) ? 1.5 : 1))
+  const mult = (esJefe(t, hoy) ? 1.5 : 1) * (zombi ? 1.5 : 1)
+  return Math.max(1, Math.min(150, Math.round((base + bono) * mult)))
 }
 
 export function hora12(hhmm) {

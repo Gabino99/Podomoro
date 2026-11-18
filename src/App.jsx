@@ -6,6 +6,12 @@ import Store from './components/Store'
 import Stats from './components/Stats'
 import Misiones from './components/Misiones'
 import { useRecompensas } from './lib/useRecompensas'
+import { llamarTodoist } from './lib/todoist'
+
+// Misión amarrada al pomodoro (Modo enfoque). Se guarda para que sobreviva a recargar.
+const leerMisionFoco = () => {
+  try { return JSON.parse(localStorage.getItem('focus_mision') || 'null') } catch { return null }
+}
 
 export default function App() {
   const [session,  setSession]  = useState(null)
@@ -17,6 +23,29 @@ export default function App() {
   const [errorMeta, setErrorMeta] = useState(null)
   const prevPuntosRef = useRef(0)
   const usuarioRef = useRef(null) // usuario cuyo perfil ya se cargó
+  const [misionFoco, setMisionFoco] = useState(leerMisionFoco)
+  const [inicioFoco, setInicioFoco] = useState(0)
+
+  useEffect(() => {
+    try {
+      if (misionFoco) localStorage.setItem('focus_mision', JSON.stringify(misionFoco))
+      else localStorage.removeItem('focus_mision')
+    } catch { /* sin almacenamiento */ }
+  }, [misionFoco])
+
+  const enfocar = (t) => {
+    const { id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi } = t
+    setMisionFoco({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi })
+    setInicioFoco(n => n + 1)
+    setActiveTab('timer')
+  }
+
+  // "¿La terminó?" → Sí: se completa en Todoist y el servidor suma los puntos.
+  const terminarMision = async (m) => {
+    const r = await llamarTodoist('complete', { id: m.id, esperado: m.due?.date || null })
+    if (typeof r?.puntos_totales === 'number') setPuntos(r.puntos_totales)
+    return r
+  }
   const recompensasApi = useRecompensas(session?.user?.id)
 
   // Animar badge cuando suben puntos
@@ -144,10 +173,17 @@ export default function App() {
           </div>
         )}
         {activeTab === 'misiones' && (
-          <Misiones puntos={puntos} setPuntos={setPuntos} />
+          <Misiones puntos={puntos} setPuntos={setPuntos} onEnfocar={enfocar} />
         )}
-        {activeTab === 'timer' && (
+        {/* El Temporizador nunca se desmonta: si termina mientras está en otra
+            pestaña, la sesión igual se guarda y suma sus puntos. */}
+        <div style={{ display: activeTab === 'timer' ? 'contents' : 'none' }}>
           <Timer
+            activo={activeTab === 'timer'}
+            mision={misionFoco}
+            inicioFoco={inicioFoco}
+            onTerminarMision={terminarMision}
+            onSoltarMision={() => setMisionFoco(null)}
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
@@ -161,7 +197,7 @@ export default function App() {
               setPerfil(p => ({ ...p, meta_diaria_minutos: mins }))
             }}
           />
-        )}
+        </div>
         {activeTab === 'store' && (
           <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} {...recompensasApi} />
         )}

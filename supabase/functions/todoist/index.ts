@@ -13,6 +13,10 @@
 //    complete  → { id, esperado } completa en Todoist y suma puntos
 //    postpone  → { id, fecha }    mueve la fecha (respeta hábitos repetitivos)
 //    delete    → { id }           borra la tarea en Todoist
+//    detalle   → { id } contexto, veces pospuesta (zombi) y subtareas
+//    contexto  → { id, texto } guarda "🧠 Contexto: …" como comentario
+//    partir    → { id, pasos[] } crea subtareas para hoy
+//    soltar    → { id } p4 + 🗑️_Superflua + 30 días
 //    sync      → suma puntos por lo completado fuera de la app (app de
 //                Todoist, coach…). También la llama el cron cada 10 min
 //                con el encabezado x-cron-secret (ver supabase/cron_todoist.sql).
@@ -95,16 +99,100 @@ function normalizar(t: any) {
 
 // Misma fórmula que muestra la pantalla de Misiones.
 // p: 1 = p1 … 4 = p4. dur: minutos o null. vencida: de un día anterior.
-function calcularPuntos(p: number, dur: number | null, vencida: boolean) {
+// zombi: pospuesta 3+ veces; si por fin se termina, vale x1.5 (se acumula con jefe).
+function calcularPuntos(p: number, dur: number | null, vencida: boolean, zombi = false) {
   const base = ({ 1: 40, 2: 25, 3: 15, 4: 10 } as Record<number, number>)[p] ?? 10;
   const bono = dur ? Math.min(30, Math.round(dur / 5)) : 5;
-  return Math.max(1, Math.min(150, Math.round((base + bono) * (vencida ? 1.5 : 1))));
+  const mult = (vencida ? 1.5 : 1) * (zombi ? 1.5 : 1);
+  return Math.max(1, Math.min(150, Math.round((base + bono) * mult)));
 }
 
-function puntosDe(t: any) {
+function puntosDe(t: any, zombi = false) {
   const vencida = !!(t.due?.date && String(t.due.date).slice(0, 10) < hoyCR());
-  return { puntos: calcularPuntos(prioridadUI(t), duracionMin(t), vencida), vencida };
+  return { puntos: calcularPuntos(prioridadUI(t), duracionMin(t), vencida, zombi), vencida };
 }
+
+// ── Contexto y tareas zombi (etapa 3) ─────────────────────
+const PREFIJO_CONTEXTO = "🧠 Contexto:";
+const PREFIJO_REPROGRAMADA = "🔁 Reprogramada";
+const LIMITE_ZOMBI = 3;
+const ETIQUETA_SUPERFLUA = "🗑️_Superflua";
+
+// Lee los comentarios de una tarea y saca el contexto y cuántas veces se pospuso.
+async function leerComentarios(id: string) {
+  const comentarios = await paginar("/comments", { task_id: id });
+  const ctx = comentarios
+    .filter((c: any) => String(c.content ?? "").startsWith(PREFIJO_CONTEXTO))
+    .sort((a: any, b: any) => String(b.posted_at ?? "").localeCompare(String(a.posted_at ?? "")))[0];
+  const reprogramadas = comentarios.filter((c: any) => String(c.content ?? "").startsWith(PREFIJO_REPROGRAMADA)).length;
+  return {
+    contexto: ctx ? String(ctx.content).slice(PREFIJO_CONTEXTO.length).trim() : "",
+    contexto_id: ctx ? String(ctx.id) : null,
+    reprogramadas,
+    zombi: reprogramadas >= LIMITE_ZOMBI,
+  };
+}
+
+const subtareasActivas = async (id: string) => (await paginar("/tasks", { parent_id: id })).filter((t: any) => !t.checked);
+
+const sumarDias = (yyyyMmDd: string, n: number) => {
+  const d = new Date(`${yyyyMmDd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+// Mueve la fecha conservando la repetición (igual que "reschedule" de Todoist).
+// extra: otros campos para el mismo item_update (prioridad, etiquetas…).
+async function moverFecha(t: any, fecha: string, extra: Record<string, unknown> = {}) {
+  const id = String(t.id);
+  if (t.due) {
+    let date = fecha.length === 16 ? fecha + ":00" : fecha;
+    if (date.length === 10 && String(t.due.date).length > 10) date += String(t.due.date).slice(10);
+    const uuid = crypto.randomUUID();
+    const commands = [{
+      type: "item_update",
+      uuid,
+      args: {
+        id,
+        ...extra,
+        // Hábitos: se manda el texto ("every day") para no perder la repetición.
+        // Tareas normales: solo la fecha; si se manda el texto viejo ("18 Nov"),
+        // Todoist le hace caso al texto y la fecha no se mueve.
+        due: t.due.is_recurring
+          ? {
+            date,
+            string: t.due.string,
+            is_recurring: true,
+            ...(t.due.timezone ? { timezone: t.due.timezone } : {}),
+            ...(t.due.lang ? { lang: t.due.lang } : {}),
+          }
+          : { date, ...(t.due.timezone ? { timezone: t.due.timezone } : {}) },
+      },
+    }];
+    const r = await td("/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ commands: JSON.stringify(commands) }),
+    });
+    const estado = r?.sync_status?.[uuid];
+    if (estado !== "ok") throw new TodoistError(400, JSON.stringify(estado));
+  } else {
+    // Tarea sin fecha: se le pone con due_string, que sí acepta fecha y hora.
+    const due_string = fecha.length > 10 ? `${fecha.slice(0, 10)} ${fecha.slice(11, 16)}` : fecha;
+    await td(`/tasks/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ due_string, ...extra }),
+    });
+  }
+}
+
+const comentar = (id: string, content: string) =>
+  td("/comments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: id, content }),
+  });
 
 // ── Sincronización: completadas fuera de la app ──────────
 
@@ -286,7 +374,13 @@ Deno.serve(async (req) => {
       if (body.esperado && t.due?.date && body.esperado !== t.due.date) {
         return json({ ok: false, motivo: "ya_completada" });
       }
-      const { puntos, vencida } = puntosDe(t);
+      // Zombi (pospuesta 3+ veces): terminarla vale x1.5.
+      let zombi = false;
+      // (No confiar en t.note_count: la API v1 lo devuelve en 0 aunque haya comentarios.)
+      if (!t.due?.is_recurring) {
+        try { zombi = (await leerComentarios(id)).zombi; } catch { /* sin bono */ }
+      }
+      const { puntos, vencida } = puntosDe(t, zombi);
       const ocurrencia = t.due?.date ?? "sin-fecha";
       let proyecto: string | null = null;
       try { proyecto = (await td(`/projects/${t.project_id}`))?.name ?? null; } catch { /* opcional */ }
@@ -308,7 +402,7 @@ Deno.serve(async (req) => {
         // La tarea sí se completó en Todoist; solo falló sumar los puntos.
         return json({ ok: true, completada: true, puntos_ganados: 0, error_puntos: error.message });
       }
-      return json({ ok: true, completada: true, ...data });
+      return json({ ok: true, completada: true, zombi, ...data });
     }
 
     if (action === "postpone") {
@@ -317,51 +411,72 @@ Deno.serve(async (req) => {
         return json({ ok: false, error: "Fecha inválida." }, 400);
       }
       const t = await td(`/tasks/${id}`);
-      if (t.due) {
-        // Cambia solo la fecha y conserva la repetición (igual que "reschedule" de Todoist).
-        let date = fecha.length === 16 ? fecha + ":00" : fecha;
-        if (date.length === 10 && String(t.due.date).length > 10) date += String(t.due.date).slice(10);
-        const uuid = crypto.randomUUID();
-        const commands = [{
-          type: "item_update",
-          uuid,
-          args: {
-            id,
-            due: {
-              date,
-              string: t.due.string,
-              is_recurring: !!t.due.is_recurring,
-              ...(t.due.timezone ? { timezone: t.due.timezone } : {}),
-              ...(t.due.lang ? { lang: t.due.lang } : {}),
-            },
-          },
-        }];
-        const r = await td("/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ commands: JSON.stringify(commands) }),
-        });
-        const estado = r?.sync_status?.[uuid];
-        if (estado !== "ok") throw new TodoistError(400, JSON.stringify(estado));
-      } else {
-        // Tarea sin fecha: se le pone con due_string, que sí acepta fecha y hora.
-        const due_string = fecha.length > 10 ? `${fecha.slice(0, 10)} ${fecha.slice(11, 16)}` : fecha;
-        await td(`/tasks/${id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ due_string }),
-        });
+      // Tarea zombi: no se pospone más hasta partirla en pasos (o soltarla).
+      if (!t.due?.is_recurring) {
+        const info = await leerComentarios(id);
+        if (info.zombi && (await subtareasActivas(id)).length === 0) {
+          return json({ ok: false, motivo: "zombi", reprogramadas: info.reprogramadas,
+            error: `Esta tarea ya se pospuso ${info.reprogramadas} veces. Pártala en pasos o suéltela.` });
+        }
       }
+      await moverFecha(t, fecha);
       // Deja rastro para el coach y para detectar tareas "zombi" (pospuestas muchas veces).
       if (!t.due?.is_recurring) {
-        try {
-          await td("/comments", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ task_id: id, content: `🔁 Reprogramada desde FOCUS ${hoyCR()}` }),
-          });
-        } catch { /* el comentario es opcional */ }
+        try { await comentar(id, `${PREFIJO_REPROGRAMADA} desde FOCUS ${hoyCR()}`); } catch { /* opcional */ }
       }
+      return json({ ok: true });
+    }
+
+    // Contexto, veces pospuesta y pasos de una tarea (para la misión actual).
+    if (action === "detalle") {
+      const t = await td(`/tasks/${id}`);
+      const [info, subs] = await Promise.all([leerComentarios(id), subtareasActivas(id)]);
+      return json({ ok: true, ...info, zombi: info.zombi && !t.due?.is_recurring, subtareas: subs.length });
+    }
+
+    // Guarda el contexto como comentario "🧠 Contexto: …" (actualiza el anterior si existe).
+    if (action === "contexto") {
+      const texto = String(body.texto ?? "").trim().slice(0, 2000);
+      if (!texto) return json({ ok: false, error: "Escriba algo de contexto." }, 400);
+      const content = `${PREFIJO_CONTEXTO} ${texto}`;
+      const { contexto_id } = await leerComentarios(id);
+      if (contexto_id) {
+        await td(`/comments/${contexto_id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+      } else {
+        await comentar(id, content);
+      }
+      return json({ ok: true, contexto: texto });
+    }
+
+    // Parte la tarea en pasos: cada línea es una subtarea para hoy, con la misma prioridad.
+    if (action === "partir") {
+      const pasos = (Array.isArray(body.pasos) ? body.pasos : [])
+        .map((p: unknown) => String(p ?? "").trim().slice(0, 300)).filter(Boolean).slice(0, 10);
+      if (pasos.length < 2) return json({ ok: false, error: "Escriba al menos 2 pasos, uno por línea." }, 400);
+      const t = await td(`/tasks/${id}`);
+      const creadas = [];
+      for (const content of pasos) {
+        const n = await td("/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, parent_id: id, priority: t.priority ?? 1, due_string: "today" }),
+        });
+        creadas.push(normalizar(n));
+      }
+      try { await comentar(id, `🧩 Partida en ${pasos.length} pasos desde FOCUS ${hoyCR()}`); } catch { /* opcional */ }
+      return json({ ok: true, creadas });
+    }
+
+    // Soltar: baja a p4, etiqueta 🗑️_Superflua y la manda a +30 días.
+    if (action === "soltar") {
+      const t = await td(`/tasks/${id}`);
+      const etiquetas = Array.from(new Set([...(t.labels ?? []), ETIQUETA_SUPERFLUA]));
+      await moverFecha(t, sumarDias(hoyCR(), 30), { priority: 1, labels: etiquetas });
+      try { await comentar(id, `🗑️ Soltada desde FOCUS ${hoyCR()}`); } catch { /* opcional */ }
       return json({ ok: true });
     }
 
