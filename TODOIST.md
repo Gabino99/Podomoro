@@ -105,7 +105,9 @@ Todo lo calcula el servidor (`src/schema.sql`, sección v6); el navegador nunca 
 
 - **XP y niveles:** XP = todo lo ganado (nunca baja); los puntos son el saldo para recompensas.
   Nivel n → n+1 pide 100 + (n-1)·50 XP. Rangos: Aprendiz (1), Escudero (3), Caballero (6),
-  Paladín (10), Leyenda (15). Al instalar v6 se sumó el XP de todo el historial.
+  Paladín (10), Leyenda (15). Al instalar v6 se sumó el XP de todo el historial; el 2026-11-18
+  Gabriel eligió empezar en nivel 1, así que su XP se puso en 0 (`update perfiles set xp_total = 0`).
+  Los puntos, la racha, las insignias y las estadísticas (bitácora `xp_eventos`) no cambiaron.
 - **Combo:** otra misión antes de 45 min → ×1, ×1.5, ×2, ×2.5, ×3. Arriba se ve la cuenta regresiva.
 - **Racha:** días con al menos una misión o un pomodoro. Los escudos (máx. 3) tapan días perdidos.
 - **Cofres (32 % por misión):** legendario 4 % (+100), XP doble 8 % (la siguiente misión ×2),
