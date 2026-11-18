@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
---  FOCUS — Esquema SQL para Supabase (v4)
+--  FOCUS — Esquema SQL para Supabase (v5)
 --  Ejecutar en: Supabase > SQL Editor > New Query
 --  Es repetible: se puede correr en una base nueva o en
 --  la ya existente sin perder datos.
@@ -14,6 +14,10 @@
 --  Cambios v4 (al final del archivo):
 --   · Tabla `misiones` y función `registrar_mision` para las
 --     tareas de Todoist completadas desde la pestaña Misiones.
+--
+--  Cambios v5 (al final del archivo):
+--   · Puntos por lo completado fuera de la app (tabla `sync_todoist`,
+--     columna misiones.origen, registrar_mision con p_origen).
 -- ═══════════════════════════════════════════════════════
 
 -- ── 1. Tablas ────────────────────────────────────────
@@ -246,6 +250,13 @@ DROP POLICY IF EXISTS "misiones_select" ON public.misiones;
 CREATE POLICY "misiones_select" ON public.misiones
   FOR SELECT USING (auth.uid() = user_id);
 
+-- v5: de dónde vino la misión ('app' = botón Hecho, 'todoist' = completada fuera de la app)
+ALTER TABLE public.misiones ADD COLUMN IF NOT EXISTS origen TEXT NOT NULL DEFAULT 'app';
+
+-- v5 cambió la firma (agregó p_origen). Se borra la de 8 parámetros para que
+-- no queden dos versiones y la API no sepa cuál llamar.
+DROP FUNCTION IF EXISTS public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT);
+
 CREATE OR REPLACE FUNCTION public.registrar_mision(
   p_user_id    UUID,
   p_task_id    TEXT,
@@ -254,7 +265,8 @@ CREATE OR REPLACE FUNCTION public.registrar_mision(
   p_proyecto   TEXT,
   p_prioridad  INT,
   p_vencida    BOOLEAN,
-  p_puntos     INT
+  p_puntos     INT,
+  p_origen     TEXT DEFAULT 'app'
 )
 RETURNS JSON
 LANGUAGE plpgsql
@@ -272,13 +284,17 @@ BEGIN
   IF p_puntos IS NULL OR p_puntos < 1 OR p_puntos > 150 THEN
     RAISE EXCEPTION 'Puntos inválidos';
   END IF;
+  IF coalesce(p_origen, 'app') NOT IN ('app', 'todoist') THEN
+    RAISE EXCEPTION 'Origen inválido';
+  END IF;
 
   INSERT INTO public.perfiles (user_id) VALUES (p_user_id)
   ON CONFLICT (user_id) DO NOTHING;
 
-  INSERT INTO public.misiones (user_id, task_id, ocurrencia, contenido, proyecto, prioridad, vencida, puntos)
+  INSERT INTO public.misiones (user_id, task_id, ocurrencia, contenido, proyecto, prioridad, vencida, puntos, origen)
   VALUES (p_user_id, p_task_id, left(p_ocurrencia, 40), left(coalesce(p_contenido, 'Tarea'), 300),
-          left(p_proyecto, 120), coalesce(p_prioridad, 4), coalesce(p_vencida, FALSE), p_puntos)
+          left(p_proyecto, 120), coalesce(p_prioridad, 4), coalesce(p_vencida, FALSE), p_puntos,
+          coalesce(p_origen, 'app'))
   ON CONFLICT (user_id, task_id, ocurrencia) DO NOTHING;
   GET DIAGNOSTICS v_filas = ROW_COUNT;
   v_nueva := v_filas > 0;
@@ -295,7 +311,47 @@ END;
 $$;
 
 -- Solo la Edge Function (service_role) puede sumar puntos de misión.
-REVOKE ALL ON FUNCTION public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT)
+REVOKE ALL ON FUNCTION public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT, TEXT)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT)
+GRANT EXECUTE ON FUNCTION public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT, TEXT)
   TO service_role;
+
+-- ═══════════════════════════════════════════════════════
+--  v5 — Puntos por lo completado FUERA de la app
+--  (app de Todoist, el coach, el celular…)
+--  · Cada 10 min un cron llama a la Edge Function `todoist` con
+--    { action: "sync" }; también corre al abrir la pestaña Misiones.
+--  · La función lee el registro de actividad de Todoist y suma cada
+--    completada con `registrar_mision` (origen 'todoist'). La llave
+--    (tarea, fecha de vencimiento) es la misma que usa el botón Hecho,
+--    así que nada suma dos veces.
+--  · El cron se programa aparte: supabase/cron_todoist.sql
+-- ═══════════════════════════════════════════════════════
+
+-- Estado de la sincronización por usuario. Solo la escribe la Edge Function.
+CREATE TABLE IF NOT EXISTS public.sync_todoist (
+  user_id       UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  desde         TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- no se cuenta nada anterior a esto
+  ultima        TIMESTAMPTZ,
+  ultimo_error  TEXT
+);
+ALTER TABLE public.sync_todoist ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "sync_todoist_select" ON public.sync_todoist;
+CREATE POLICY "sync_todoist_select" ON public.sync_todoist
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Clave compartida entre el cron y la Edge Function (vive en Supabase Vault).
+-- Solo la Edge Function (service_role) puede leerla.
+CREATE OR REPLACE FUNCTION public.todoist_cron_secreto()
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN (SELECT decrypted_secret FROM vault.decrypted_secrets
+          WHERE name = 'todoist_cron_secret' LIMIT 1);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.todoist_cron_secreto() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.todoist_cron_secreto() TO service_role;

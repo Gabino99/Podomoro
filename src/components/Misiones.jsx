@@ -66,7 +66,27 @@ export default function Misiones({ puntos, setPuntos }) {
     setCargando(false)
   }, [])
 
+  // Puntos por lo que completó fuera de la app (app de Todoist, coach…).
+  // El cron del servidor lo hace cada 10 min; aquí se adelanta al abrir la pestaña.
+  const ultimaSync = useRef(0)
+  const sincronizar = useCallback(async () => {
+    if (Date.now() - ultimaSync.current < 2 * 60 * 1000) return
+    ultimaSync.current = Date.now()
+    try {
+      const r = await llamarTodoist('sync')
+      if (r?.nuevas > 0) {
+        if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
+        mostrarAviso(`+${r.puntos_ganados} pts por ${r.nuevas} misión${r.nuevas > 1 ? 'es' : ''} hecha${r.nuevas > 1 ? 's' : ''} fuera de la app 🎉`)
+      }
+    } catch { /* silencioso: el cron lo reintenta */ }
+  }, [setPuntos, mostrarAviso])
+
   useEffect(() => { cargar() }, [cargar])
+  useEffect(() => {
+    sincronizar()
+    const iv = setInterval(() => { if (document.visibilityState === 'visible') sincronizar() }, 60000)
+    return () => clearInterval(iv)
+  }, [sincronizar])
   // Refresca cada minuto mientras la pestaña está visible (por si completa algo en Todoist).
   useEffect(() => {
     const iv = setInterval(() => { if (document.visibilityState === 'visible') cargar(true) }, 60000)

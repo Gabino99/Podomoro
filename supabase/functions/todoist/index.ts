@@ -13,6 +13,9 @@
 //    complete  → { id, esperado } completa en Todoist y suma puntos
 //    postpone  → { id, fecha }    mueve la fecha (respeta hábitos repetitivos)
 //    delete    → { id }           borra la tarea en Todoist
+//    sync      → suma puntos por lo completado fuera de la app (app de
+//                Todoist, coach…). También la llama el cron cada 10 min
+//                con el encabezado x-cron-secret (ver supabase/cron_todoist.sql).
 // ═══════════════════════════════════════════════════════
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -91,13 +94,134 @@ function normalizar(t: any) {
 }
 
 // Misma fórmula que muestra la pantalla de Misiones.
-function puntosDe(t: any) {
-  const p = prioridadUI(t);
+// p: 1 = p1 … 4 = p4. dur: minutos o null. vencida: de un día anterior.
+function calcularPuntos(p: number, dur: number | null, vencida: boolean) {
   const base = ({ 1: 40, 2: 25, 3: 15, 4: 10 } as Record<number, number>)[p] ?? 10;
-  const dur = duracionMin(t);
   const bono = dur ? Math.min(30, Math.round(dur / 5)) : 5;
+  return Math.max(1, Math.min(150, Math.round((base + bono) * (vencida ? 1.5 : 1))));
+}
+
+function puntosDe(t: any) {
   const vencida = !!(t.due?.date && String(t.due.date).slice(0, 10) < hoyCR());
-  return { puntos: Math.round((base + bono) * (vencida ? 1.5 : 1)), vencida };
+  return { puntos: calcularPuntos(prioridadUI(t), duracionMin(t), vencida), vencida };
+}
+
+// ── Sincronización: completadas fuera de la app ──────────
+
+// Ref del proyecto de Supabase ("mzlk…" en https://mzlk….supabase.co). Las tareas que
+// completa el botón Hecho quedan en Todoist con client "…ref=<este ref>": esas ya
+// tienen sus puntos y se saltan.
+const PROJECT_REF = (SUPABASE_URL.match(/^https?:\/\/([^.]+)\./) ?? [])[1] ?? "";
+
+// extra_data a veces viene en snake_case y a veces en camelCase.
+const ex = (x: any, snake: string, camel: string) => x?.[snake] ?? x?.[camel];
+
+// Inicio del día de hoy en Costa Rica (UTC-6, sin horario de verano).
+const inicioHoyCR = () => new Date(`${hoyCR()}T06:00:00Z`);
+const isoSinMs = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
+
+// Convierte un evento "item:completed" del registro de actividad en una misión,
+// o null si no corresponde (de otra persona, o ya la registró el botón Hecho).
+function misionDeEvento(ev: any, miId: string) {
+  if (ev?.object_type !== "item" || ev?.event_type !== "completed") return null;
+  if (ev.initiator_id && miId && String(ev.initiator_id) !== miId) return null;
+  const x = ev.extra_data ?? {};
+  if (PROJECT_REF && String(x.client ?? "").includes(`ref=${PROJECT_REF}`)) return null;
+
+  // Misma llave que usa el botón Hecho: la fecha de vencimiento que se completó
+  // ("2026-11-18" o "2026-11-18T19:00:00"), o "sin-fecha".
+  const dueLocal = String(ex(x, "completed_due_date_local", "completedDueDateLocal") ?? "");
+  const conHora = ex(x, "has_time", "hasTime") === true;
+  const ocurrencia = dueLocal ? (conHora ? dueLocal.slice(0, 19) : dueLocal.slice(0, 10)) : "sin-fecha";
+
+  const prioridad = 5 - (Number(x.priority) || 1);
+  const cant = Number(x.duration) || 0;
+  const unidad = ex(x, "duration_unit", "durationUnit");
+  const dur = cant ? (unidad === "day" ? cant * 1440 : cant) : null;
+  const diaEvento = fmtCR.format(new Date(ev.event_date));
+  const vencida = ocurrencia !== "sin-fecha" && ocurrencia.slice(0, 10) < diaEvento;
+
+  return {
+    task_id: String(ev.object_id),
+    ocurrencia,
+    contenido: String(x.content ?? "Tarea"),
+    proyecto_id: ev.parent_project_id ? String(ev.parent_project_id) : null,
+    prioridad,
+    vencida,
+    puntos: calcularPuntos(prioridad, dur, vencida),
+  };
+}
+
+async function sincronizar(userId: string) {
+  const db = createClient(SUPABASE_URL, SERVICE_KEY);
+  const ahora = new Date();
+
+  const { data: estado } = await db.from("sync_todoist").select("desde").eq("user_id", userId).maybeSingle();
+  let desde = estado?.desde ? new Date(estado.desde) : inicioHoyCR();
+  if (!estado) await db.from("sync_todoist").insert({ user_id: userId, desde: desde.toISOString() });
+  const tope = new Date(ahora.getTime() - 3 * 86400000); // nunca más de 3 días atrás
+  if (desde < tope) desde = tope;
+
+  try {
+    const [yo, eventos, proyectos] = await Promise.all([
+      td("/user"),
+      paginar("/activities", {
+        object_event_types: '["item:completed"]',
+        date_from: isoSinMs(desde),
+        date_to: isoSinMs(ahora),
+      }),
+      paginar("/projects"),
+    ]);
+    const nombres = Object.fromEntries(proyectos.map((p: any) => [String(p.id), p.name]));
+    let nuevas = 0, ganados = 0;
+    let total: number | null = null;
+
+    for (const ev of eventos) {
+      const m = misionDeEvento(ev, String(yo?.id ?? ""));
+      if (!m) continue;
+      const { data, error } = await db.rpc("registrar_mision", {
+        p_user_id: userId,
+        p_task_id: m.task_id,
+        p_ocurrencia: m.ocurrencia,
+        p_contenido: m.contenido,
+        p_proyecto: m.proyecto_id ? nombres[m.proyecto_id] ?? null : null,
+        p_prioridad: m.prioridad,
+        p_vencida: m.vencida,
+        p_puntos: m.puntos,
+        p_origen: "todoist",
+      });
+      if (error) throw new Error(`registrar_mision: ${error.message}`);
+      total = data?.puntos_totales ?? total;
+      if (data?.nueva) { nuevas++; ganados += data.puntos_ganados ?? 0; }
+    }
+
+    await db.from("sync_todoist").update({ ultima: ahora.toISOString(), ultimo_error: null }).eq("user_id", userId);
+    return { ok: true, revisadas: eventos.length, nuevas, puntos_ganados: ganados, puntos_totales: total };
+  } catch (e) {
+    await db.from("sync_todoist").update({ ultimo_error: String((e as Error).message).slice(0, 300) }).eq("user_id", userId);
+    throw e;
+  }
+}
+
+// El cron no tiene sesión de usuario: se identifica con la clave guardada en Vault.
+async function esCron(req: Request) {
+  const clave = req.headers.get("x-cron-secret");
+  if (!clave) return false;
+  const db = createClient(SUPABASE_URL, SERVICE_KEY);
+  const { data, error } = await db.rpc("todoist_cron_secreto");
+  return !error && typeof data === "string" && data.length >= 32 && data === clave;
+}
+
+async function usuarioPorCorreo(correo: string) {
+  const db = createClient(SUPABASE_URL, SERVICE_KEY);
+  for (let page = 1; page <= 10; page++) {
+    const { data, error } = await db.auth.admin.listUsers({ page, perPage: 100 });
+    if (error) throw new Error(error.message);
+    const u = data.users.find((u: any) => (u.email ?? "").toLowerCase() === correo);
+    if (u) return u;
+    if (data.users.length < 100) break;
+  }
+  return null;
 }
 
 async function usuarioActual(req: Request) {
@@ -112,6 +236,19 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ ok: false, error: "Método no permitido" }, 405);
   if (!TOKEN) return json({ ok: false, error: "Falta el secreto TODOIST_TOKEN en Supabase." }, 500);
+
+  // Llamada del cron: solo puede sincronizar, y solo para ALLOWED_EMAIL.
+  if (req.headers.get("x-cron-secret")) {
+    if (!(await esCron(req))) return json({ ok: false, error: "Clave del cron inválida." }, 401);
+    if (!ALLOWED_EMAIL) return json({ ok: false, error: "El cron necesita el secreto ALLOWED_EMAIL." }, 500);
+    try {
+      const dueno = await usuarioPorCorreo(ALLOWED_EMAIL);
+      if (!dueno) return json({ ok: false, error: "No existe un usuario con ALLOWED_EMAIL." }, 404);
+      return json(await sincronizar(dueno.id));
+    } catch (e) {
+      return json({ ok: false, error: `Sincronización: ${(e as Error).message}` }, 502);
+    }
+  }
 
   const user = await usuarioActual(req);
   if (!user) return json({ ok: false, error: "Inicie sesión de nuevo." }, 401);
@@ -137,6 +274,8 @@ Deno.serve(async (req) => {
         proyectos: proyectos.map((p) => ({ id: String(p.id), nombre: p.name, inbox: !!p.inbox_project })),
       });
     }
+
+    if (action === "sync") return json(await sincronizar(user.id));
 
     if (!id) return json({ ok: false, error: "Falta el id de la tarea." }, 400);
 
