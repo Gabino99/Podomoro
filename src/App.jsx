@@ -16,6 +16,7 @@ export default function App() {
   const [pointsAnim, setPointsAnim] = useState(false)
   const [errorMeta, setErrorMeta] = useState(null)
   const prevPuntosRef = useRef(0)
+  const usuarioRef = useRef(null) // usuario cuyo perfil ya se cargó
   const recompensasApi = useRecompensas(session?.user?.id)
 
   // Animar badge cuando suben puntos
@@ -35,10 +36,15 @@ export default function App() {
       else setLoading(false)
     })
 
+    // Supabase avisa SIGNED_IN / TOKEN_REFRESHED cada vez que la pestaña vuelve
+    // a tener foco. Solo se recarga el perfil si cambió el usuario; si no, la
+    // pantalla de carga desmontaba Misiones y el Temporizador a media acción.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
-      if (session) fetchOrCreatePerfil(session.user.id)
-      else {
+      if (session) {
+        if (session.user.id !== usuarioRef.current) fetchOrCreatePerfil(session.user.id)
+      } else {
+        usuarioRef.current = null
         setPerfil(null)
         setPuntos(0)
         setLoading(false)
@@ -49,6 +55,7 @@ export default function App() {
   }, [])
 
   const fetchOrCreatePerfil = async (userId) => {
+    usuarioRef.current = userId
     setLoading(true)
     let { data, error } = await supabase
       .from('perfiles')
