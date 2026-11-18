@@ -37,9 +37,14 @@ export default function App() {
     } catch { /* sin almacenamiento */ }
   }, [misionFoco])
 
+  const datosMision = ({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi }) =>
+    ({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi: !!zombi })
+
+  // Desde el Temporizador: amarra la misión pero no arranca (usted le da Iniciar).
+  const elegirMision = (t) => setMisionFoco(datosMision(t))
+
   const enfocar = (t) => {
-    const { id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi } = t
-    setMisionFoco({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi })
+    setMisionFoco(datosMision(t))
     setInicioFoco(n => n + 1)
     setActiveTab('timer')
   }
@@ -196,6 +201,7 @@ export default function App() {
             inicioFoco={inicioFoco}
             onTerminarMision={terminarMision}
             onSoltarMision={() => setMisionFoco(null)}
+            onElegirMision={elegirMision}
             onSesionGuardada={(r) => { celebrarResultado(r); refrescarJuego() }}
             proximoEvento={agenda.proximo}
             ventana={agenda.ventana}

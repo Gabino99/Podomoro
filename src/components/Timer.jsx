@@ -5,6 +5,7 @@ import { playWorkComplete, playBreakComplete, setVolume, getVolume } from '../li
 import { proximaMeta } from '../lib/useRecompensas'
 import { fechaCR, diasHasta } from '../lib/fechas'
 import { horaCorta, textoEnMinutos } from '../lib/useAgenda'
+import SelectorMision from './SelectorMision'
 
 function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   const [editing, setEditing] = useState(false)
@@ -99,6 +100,7 @@ export default function Timer({
   onSesionGuardada,          // (respuesta de registrar_sesion) => celebrar insignias y refrescar el juego
   proximoEvento = null,      // próximo evento de Google Calendar { titulo, inicio, fin }
   ventana = null,            // minutos que faltan para ese evento
+  onElegirMision,            // (tarea) => amarrar una misión de Todoist sin arrancar
 }) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
@@ -336,6 +338,16 @@ export default function Timer({
     }
   }
 
+  // Misión elegida desde el Temporizador (sin arrancar): toma su duración y su nombre como nota.
+  useEffect(() => {
+    if (!mision || isRunning || isComplete) return
+    setNota((mision.contenido || '').slice(0, 120))
+    if (mision.duracion >= 5 && mision.duracion <= 90 && mode === 'work') {
+      clearTimerStorage(); setWorkDuration(mision.duracion); setSecondsLeft(mision.duracion * 60)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mision?.id])
+
   const resetTimer = useCallback((newMode = mode, newWork = workDuration, newBreak = breakDuration) => {
     clearInterval(intervalRef.current); clearTimerStorage()
     setIsRunning(false); setIsComplete(false); setError(null); setShowBreakOffer(false)
@@ -385,6 +397,9 @@ export default function Timer({
             <button className="btn-ghost small" onClick={() => onSoltarMision?.()} title="Soltar la misión (el pomodoro sigue)">✕</button>
           )}
         </div>
+      )}
+      {!mision && onElegirMision && mode === 'work' && !isRunning && !isComplete && !preguntaMision && (
+        <SelectorMision onElegir={onElegirMision} />
       )}
       {avisoMision && !mision && (
         <div className="next-prize-banner all-unlocked">{avisoMision}
