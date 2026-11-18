@@ -105,3 +105,20 @@ button.hud-chip:hover { border-color: var(--xp); color: var(--text-1); }
 .aviso-agenda { width: 100%; max-width: 520px; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; font-size: 0.84rem; color: var(--amber-bright); background: var(--amber-glow); border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; }
 .aviso-agenda span { flex: 1; min-width: 200px; }
 .aviso-agenda button { background: var(--amber); color: #2a1600; font-weight: 800; font-size: 0.8rem; padding: 0.35rem 0.7rem; border-radius: 6px; }
+
+/* ── Elegir misión en el Temporizador ── */
+.selector-abrir { width: 100%; max-width: 520px; background: var(--bg-1); border: 1px dashed rgba(34,211,238,0.5); color: var(--text-1); border-radius: var(--radius); padding: 0.75rem; font-weight: 700; font-size: 0.9rem; }
+.selector-abrir:hover { border-style: solid; border-color: var(--xp-2); background: rgba(34,211,238,0.06); }
+.selector { width: 100%; max-width: 520px; background: var(--bg-1); border: 1px solid rgba(34,211,238,0.45); border-radius: var(--radius); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; animation: slideUp 0.2s ease; }
+.selector-cabeza { display: flex; align-items: center; justify-content: space-between; font-weight: 800; font-size: 0.9rem; }
+.selector-buscar { background: var(--bg-3); border: 1px solid var(--border); color: var(--text-1); border-radius: 6px; padding: 0.5rem 0.6rem; font: inherit; font-size: 0.85rem; }
+.selector-buscar:focus { outline: none; border-color: var(--xp-2); }
+.selector-lista { display: flex; flex-direction: column; gap: 0.35rem; max-height: 300px; overflow: auto; padding-right: 2px; }
+.selector-item { display: flex; align-items: center; gap: 0.6rem; text-align: left; background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1); border-radius: 8px; padding: 0.5rem 0.65rem; }
+.selector-item:hover { border-color: var(--xp-2); }
+.selector-item.jefe { border-left: 3px solid rgba(239,68,68,0.7); }
+.selector-item-info { flex: 1; min-width: 0; }
+.selector-item-nombre { font-size: 0.85rem; font-weight: 700; word-break: break-word; }
+.selector-item-meta { font-size: 0.72rem; color: var(--text-3); margin-top: 0.1rem; }
+.selector-item-pts { font-family: var(--font-mono); font-size: 0.78rem; color: var(--amber); white-space: nowrap; }
+.selector-vacio { font-size: 0.8rem; color: var(--text-3); padding: 0.4rem 0; }
