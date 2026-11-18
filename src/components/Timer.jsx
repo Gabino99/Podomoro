@@ -5,7 +5,6 @@ import { playWorkComplete, playBreakComplete, setVolume, getVolume } from '../li
 import { proximaMeta } from '../lib/useRecompensas'
 import { fechaCR, diasHasta } from '../lib/fechas'
 import { horaCorta, textoEnMinutos } from '../lib/useAgenda'
-import MusicaEnfoque from './MusicaEnfoque'
 
 function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   const [editing, setEditing] = useState(false)
@@ -100,8 +99,6 @@ export default function Timer({
   onSesionGuardada,          // (respuesta de registrar_sesion) => celebrar insignias y refrescar el juego
   proximoEvento = null,      // próximo evento de Google Calendar { titulo, inicio, fin }
   ventana = null,            // minutos que faltan para ese evento
-  spotifyUrl = null,
-  onSpotifyGuardado,
 }) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
@@ -531,8 +528,6 @@ export default function Timer({
             value={nota} onChange={e => setNota(e.target.value)} maxLength={120} />
         </div>
       )}
-
-      <MusicaEnfoque url={spotifyUrl} onGuardada={onSpotifyGuardado} />
 
       {sessionHistory.length > 0 ? (
         <div className="session-history">

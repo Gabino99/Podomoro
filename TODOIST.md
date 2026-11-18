@@ -123,7 +123,7 @@ Todo lo calcula el servidor (`src/schema.sql`, sección v6); el navegador nunca 
 
 Instalación: correr `src/schema.sql` (o solo el cambio v5→v6) y volver a desplegar la función `todoist`.
 
-## Etapa 5: Google Calendar y Spotify
+## Etapa 5: Google Calendar
 
 **📅 Calendario** (solo lectura, gratis, sin Google Cloud):
 - Arriba se ve el próximo evento ("📅 Almuerzo en 30 min (12:00 pm)") o el que está en curso.
@@ -137,14 +137,11 @@ Instalación: correr `src/schema.sql` (o solo el cambio v5→v6) y volver a desp
   Es como una contraseña: quien la tenga ve su calendario. Si se filtra, en esa misma pantalla
   se puede "Restablecer" y poner la nueva.
 
-**🎵 Spotify** (reproductor incrustado; sirve con cuenta gratis o Premium):
-- En el Temporizador, "Música de enfoque": pegue el enlace de una playlist y Guardar
-  (en Spotify: ⋯ → Compartir → Copiar enlace). Se guarda en su perfil (`guardar_spotify`).
-- El Temporizador no se apaga al cambiar de pestaña, así que la música sigue sonando.
-- "Abrir en la app de Spotify" y la opción "Abrirla sola en Modo enfoque".
-- Para escuchar canciones completas en el reproductor, inicie sesión en Spotify en ese navegador.
+**🎵 Spotify:** se probó un reproductor de playlist en el Temporizador y se quitó a pedido de
+Gabriel (no le aportaba). Quedan sin uso la columna `perfiles.spotify_url` y la función
+`guardar_spotify` (sección v7 de `src/schema.sql`); no estorban.
 
-Instalación: correr la sección v7 de `src/schema.sql` y volver a desplegar la función `todoist`.
+Instalación: volver a desplegar la función `todoist` y crear el secreto `GOOGLE_ICS_URL`.
 
 ## Atajos de teclado (en la pestaña Misiones)
 `C` completar · `P` posponer · `S` saltar · `D` eliminar · `F` modo enfoque · `Esc` cerrar menú
@@ -153,4 +150,4 @@ Instalación: correr la sección v7 de `src/schema.sql` y volver a desplegar la 
 2. ✅ Puntos por lo que complete fuera de la app (app de Todoist, coach).
 3. ✅ Pomodoro amarrado a la misión, contexto por tarea y tareas zombi.
 4. ✅ Gamificación completa: combo, cofres, retos, insignias, jefe de proyecto y estadísticas.
-5. ✅ Google Calendar y Spotify.
+5. ✅ Google Calendar (Spotify descartado).

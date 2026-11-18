@@ -11,7 +11,6 @@ import { useJuego } from './lib/useJuego'
 import './juego.css'
 import Hud, { Avisos } from './components/Hud'
 import { useAgenda } from './lib/useAgenda'
-import { abrirEnSpotify, leerAutoSpotify } from './components/MusicaEnfoque'
 
 // Misión amarrada al pomodoro (Modo enfoque). Se guarda para que sobreviva a recargar.
 const leerMisionFoco = () => {
@@ -43,7 +42,6 @@ export default function App() {
     setMisionFoco({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi })
     setInicioFoco(n => n + 1)
     setActiveTab('timer')
-    if (perfil?.spotify_url && leerAutoSpotify()) abrirEnSpotify(perfil.spotify_url)
   }
 
   // "¿La terminó?" → Sí: se completa en Todoist y el servidor suma los puntos.
@@ -201,8 +199,6 @@ export default function App() {
             onSesionGuardada={(r) => { celebrarResultado(r); refrescarJuego() }}
             proximoEvento={agenda.proximo}
             ventana={agenda.ventana}
-            spotifyUrl={perfil?.spotify_url ?? null}
-            onSpotifyGuardado={(url) => setPerfil(p => ({ ...p, spotify_url: url }))}
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
