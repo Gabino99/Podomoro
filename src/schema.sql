@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
---  FOCUS — Esquema SQL para Supabase (v3)
+--  FOCUS — Esquema SQL para Supabase (v4)
 --  Ejecutar en: Supabase > SQL Editor > New Query
 --  Es repetible: se puede correr en una base nueva o en
 --  la ya existente sin perder datos.
@@ -10,6 +10,10 @@
 --     (registrar_sesion / canjear_recompensa). El navegador
 --     ya no puede escribirse puntos ni mandar el costo.
 --   · sesiones usa `created_at` (como la base real).
+--
+--  Cambios v4 (al final del archivo):
+--   · Tabla `misiones` y función `registrar_mision` para las
+--     tareas de Todoist completadas desde la pestaña Misiones.
 -- ═══════════════════════════════════════════════════════
 
 -- ── 1. Tablas ────────────────────────────────────────
@@ -212,3 +216,86 @@ REVOKE ALL ON FUNCTION public.actualizar_meta_diaria(UUID, INT)      FROM PUBLIC
 GRANT EXECUTE ON FUNCTION public.registrar_sesion(INT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.canjear_recompensa(UUID)               TO authenticated;
 GRANT EXECUTE ON FUNCTION public.actualizar_meta_diaria(UUID, INT)      TO authenticated;
+
+-- ═══════════════════════════════════════════════════════
+--  v4 — Misiones de Todoist
+--  · Tabla `misiones`: cada tarea de Todoist completada desde la app.
+--  · Los puntos de misión los suma SOLO la función del servidor
+--    `registrar_mision`, que únicamente puede llamar la Edge Function
+--    `todoist` (rol service_role). El navegador no puede llamarla.
+--  · Una misma ocurrencia de una tarea nunca suma dos veces
+--    (en los hábitos repetitivos cada día cuenta como ocurrencia aparte).
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS public.misiones (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  task_id     TEXT NOT NULL,
+  ocurrencia  TEXT NOT NULL,              -- fecha de vencimiento que se completó
+  contenido   TEXT NOT NULL,
+  proyecto    TEXT,
+  prioridad   INT  NOT NULL DEFAULT 4,    -- 1 = p1 (la más alta) … 4 = p4
+  vencida     BOOLEAN NOT NULL DEFAULT FALSE,
+  puntos      INT  NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, task_id, ocurrencia)
+);
+
+ALTER TABLE public.misiones ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "misiones_select" ON public.misiones;
+CREATE POLICY "misiones_select" ON public.misiones
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE OR REPLACE FUNCTION public.registrar_mision(
+  p_user_id    UUID,
+  p_task_id    TEXT,
+  p_ocurrencia TEXT,
+  p_contenido  TEXT,
+  p_proyecto   TEXT,
+  p_prioridad  INT,
+  p_vencida    BOOLEAN,
+  p_puntos     INT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_filas  INT := 0;
+  v_nueva  BOOLEAN := FALSE;
+  v_puntos INT;
+BEGIN
+  IF p_user_id IS NULL OR p_task_id IS NULL OR p_ocurrencia IS NULL THEN
+    RAISE EXCEPTION 'Datos incompletos';
+  END IF;
+  IF p_puntos IS NULL OR p_puntos < 1 OR p_puntos > 150 THEN
+    RAISE EXCEPTION 'Puntos inválidos';
+  END IF;
+
+  INSERT INTO public.perfiles (user_id) VALUES (p_user_id)
+  ON CONFLICT (user_id) DO NOTHING;
+
+  INSERT INTO public.misiones (user_id, task_id, ocurrencia, contenido, proyecto, prioridad, vencida, puntos)
+  VALUES (p_user_id, p_task_id, left(p_ocurrencia, 40), left(coalesce(p_contenido, 'Tarea'), 300),
+          left(p_proyecto, 120), coalesce(p_prioridad, 4), coalesce(p_vencida, FALSE), p_puntos)
+  ON CONFLICT (user_id, task_id, ocurrencia) DO NOTHING;
+  GET DIAGNOSTICS v_filas = ROW_COUNT;
+  v_nueva := v_filas > 0;
+
+  IF v_nueva THEN
+    UPDATE public.perfiles SET puntos_totales = puntos_totales + p_puntos
+    WHERE user_id = p_user_id;
+  END IF;
+
+  SELECT puntos_totales INTO v_puntos FROM public.perfiles WHERE user_id = p_user_id;
+  RETURN json_build_object('exito', true, 'nueva', v_nueva, 'puntos_totales', v_puntos,
+                           'puntos_ganados', CASE WHEN v_nueva THEN p_puntos ELSE 0 END);
+END;
+$$;
+
+-- Solo la Edge Function (service_role) puede sumar puntos de misión.
+REVOKE ALL ON FUNCTION public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.registrar_mision(UUID, TEXT, TEXT, TEXT, TEXT, INT, BOOLEAN, INT)
+  TO service_role;

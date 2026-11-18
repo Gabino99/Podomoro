@@ -581,3 +581,75 @@ input  { font-family: inherit; }
 .prize-deadline.vencida { color: var(--red); }
 .store-empty { display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; color: var(--muted); font-size: 0.9rem; }
 @media (max-width: 600px) { .reward-row { grid-template-columns: 1fr; } }
+
+/* ── Misiones (Todoist) ───────────────────────────── */
+.misiones-container { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; position: relative; z-index: 1; }
+.mis-layout { display: grid; grid-template-columns: 1fr 340px; gap: 1.25rem; align-items: start; }
+.mis-sync { align-self: flex-start; font-size: 0.78rem; color: var(--amber); background: var(--amber-glow); border: 1px solid rgba(245,158,11,0.3); padding: 0.3rem 0.75rem; border-radius: 100px; }
+
+.mis-card {
+  position: relative; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.5rem; min-height: 380px; display: flex; flex-direction: column; gap: 0.85rem;
+}
+.mis-card.jefe { border-color: rgba(239,68,68,0.45); background: linear-gradient(160deg, rgba(239,68,68,0.07), var(--bg-1) 55%); }
+.mis-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.mis-tag { font-family: var(--font-mono); font-size: 0.7rem; padding: 0.25rem 0.55rem; border-radius: 6px; background: var(--bg-3); border: 1px solid var(--border); color: var(--text-2); }
+.mis-tag.jefe { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+.mis-tag.p1 { color: #fca5a5; } .mis-tag.p2 { color: #fdba74; } .mis-tag.p3 { color: #93c5fd; }
+.mis-tag.pts { margin-left: auto; color: var(--amber); border-color: rgba(245,158,11,0.35); background: var(--amber-glow); }
+.mis-titulo { font-size: 1.6rem; font-weight: 800; line-height: 1.25; margin: 0.25rem 0 0; word-break: break-word; }
+.mis-meta { display: flex; flex-wrap: wrap; gap: 0.45rem; font-size: 0.82rem; color: var(--text-2); }
+.mis-meta span { background: var(--bg-2); border: 1px solid var(--border); padding: 0.2rem 0.65rem; border-radius: 100px; }
+.mis-etiquetas { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.mis-etiquetas span { font-size: 0.75rem; padding: 0.15rem 0.55rem; border-radius: 100px; background: rgba(34,211,238,0.08); border: 1px solid rgba(34,211,238,0.25); color: var(--text-2); }
+.mis-desc { white-space: pre-wrap; font-size: 0.85rem; line-height: 1.5; color: var(--text-2); background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem; max-height: 140px; overflow: auto; }
+
+.mis-acciones { margin-top: auto; display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 0.6rem; }
+.mis-btn { padding: 0.9rem 0.5rem; border-radius: var(--radius-sm); font-weight: 800; font-size: 0.95rem; transition: transform 0.08s, filter 0.15s; }
+.mis-btn small { display: block; font-weight: 400; font-size: 0.68rem; opacity: 0.7; margin-top: 0.15rem; font-family: var(--font-mono); }
+.mis-btn:hover { filter: brightness(1.1); }
+.mis-btn:active { transform: translateY(2px); }
+.mis-btn.hecho { background: var(--green); color: #022c1e; }
+.mis-btn.posponer { background: var(--amber); color: #2a1600; }
+.mis-btn.saltar { background: var(--bg-3); color: var(--text-1); border: 1px solid var(--border-active); }
+.mis-btn.borrar { background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.35); }
+
+.mis-menu { background: var(--bg-2); border: 1px solid var(--amber); border-radius: var(--radius-sm); padding: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem; animation: slideUp 0.2s ease; }
+.mis-menu.borrar { border-color: var(--red); }
+.mis-menu-titulo { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--amber); font-weight: 700; }
+.mis-menu-opciones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
+.mis-menu button { background: var(--bg-3); border: 1px solid var(--border); color: var(--text-1); padding: 0.5rem; border-radius: 6px; font-size: 0.82rem; }
+.mis-menu button:hover { border-color: var(--amber); }
+.mis-menu button.peligro { background: var(--red); color: #fff; border-color: var(--red); font-weight: 700; }
+.mis-menu-fila { display: flex; gap: 0.4rem; align-items: center; }
+.mis-menu-fila.derecha { justify-content: flex-end; }
+.mis-menu-fila input { flex: 1; background: var(--bg-3); border: 1px solid var(--border); color: var(--text-1); border-radius: 6px; padding: 0.45rem; font: inherit; color-scheme: dark; }
+.mis-menu-aviso { font-size: 0.8rem; color: #fca5a5; }
+
+.mis-cola { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.mis-cola-titulo { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-2); font-weight: 700; }
+.mis-cola-titulo span { font-family: var(--font-mono); color: var(--amber); }
+.mis-cola-titulo button { margin-left: auto; }
+.mis-filtros { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.mis-filtros button { font-size: 0.72rem; padding: 0.25rem 0.6rem; border-radius: 100px; background: var(--bg-2); border: 1px solid var(--border); color: var(--text-2); }
+.mis-filtros button.on { background: var(--amber); color: #000; border-color: var(--amber); }
+.mis-lista { display: flex; flex-direction: column; gap: 0.4rem; max-height: 560px; overflow: auto; padding-right: 2px; }
+.mis-item { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; text-align: left; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.55rem 0.7rem; color: var(--text-1); }
+.mis-item:hover { border-color: var(--border-active); }
+.mis-item.actual { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+.mis-item.jefe { border-left: 3px solid var(--red); }
+.mis-item-nombre { font-size: 0.85rem; line-height: 1.3; }
+.mis-item-meta { font-size: 0.7rem; color: var(--muted); margin-top: 0.2rem; }
+.mis-item-pts { font-family: var(--font-mono); font-size: 0.75rem; color: var(--amber); align-self: center; }
+
+.mis-vacio { margin: auto; text-align: center; color: var(--muted); padding: 1.5rem 0; }
+.mis-vacio-icono { font-size: 3rem; margin-bottom: 0.5rem; }
+.mis-flotante { position: absolute; left: 50%; top: 40%; transform: translateX(-50%); font-family: var(--font-mono); font-size: 2rem; font-weight: 700; color: var(--amber); text-shadow: 0 3px 0 #000; pointer-events: none; animation: misSube 1.2s ease-out forwards; }
+@keyframes misSube { to { transform: translate(-50%, -80px); opacity: 0; } }
+.mis-aviso { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%); background: var(--bg-2); border: 1px solid var(--amber); color: var(--text-1); padding: 0.7rem 1.1rem; border-radius: var(--radius-sm); font-size: 0.9rem; z-index: 50; animation: slideUp 0.25s ease; }
+
+@media (max-width: 900px) {
+  .mis-layout { grid-template-columns: 1fr; }
+  .mis-acciones { grid-template-columns: 1fr 1fr; }
+  .mis-menu-opciones { grid-template-columns: 1fr 1fr; }
+}

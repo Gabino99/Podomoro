@@ -4,13 +4,14 @@ import Auth from './components/Auth'
 import Timer from './components/Timer'
 import Store from './components/Store'
 import Stats from './components/Stats'
+import Misiones from './components/Misiones'
 import { useRecompensas } from './lib/useRecompensas'
 
 export default function App() {
   const [session,  setSession]  = useState(null)
   const [perfil,   setPerfil]   = useState(null)
   const [puntos,   setPuntos]   = useState(0)
-  const [activeTab, setActiveTab] = useState('timer')
+  const [activeTab, setActiveTab] = useState('misiones')
   const [loading,  setLoading]  = useState(true)
   const [pointsAnim, setPointsAnim] = useState(false)
   const [errorMeta, setErrorMeta] = useState(null)
@@ -104,6 +105,7 @@ export default function App() {
         <div className="header-center">
           <nav className="main-nav">
             {[
+              { id: 'misiones', label: 'Misiones' },
               { id: 'timer', label: 'Temporizador' },
               { id: 'store', label: 'Recompensas'  },
               { id: 'stats', label: 'Estadísticas' },
@@ -133,6 +135,9 @@ export default function App() {
           <div className="error-message">{errorMeta}
             <button className="btn-ghost small" onClick={() => setErrorMeta(null)}>✕</button>
           </div>
+        )}
+        {activeTab === 'misiones' && (
+          <Misiones puntos={puntos} setPuntos={setPuntos} />
         )}
         {activeTab === 'timer' && (
           <Timer
