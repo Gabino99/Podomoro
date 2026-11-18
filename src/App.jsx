@@ -4,18 +4,57 @@ import Auth from './components/Auth'
 import Timer from './components/Timer'
 import Store from './components/Store'
 import Stats from './components/Stats'
+import Misiones from './components/Misiones'
 import { useRecompensas } from './lib/useRecompensas'
+import { llamarTodoist } from './lib/todoist'
+import { useJuego } from './lib/useJuego'
+import './juego.css'
+import Hud, { Avisos } from './components/Hud'
+import { useAgenda } from './lib/useAgenda'
+
+// Misión amarrada al pomodoro (Modo enfoque). Se guarda para que sobreviva a recargar.
+const leerMisionFoco = () => {
+  try { return JSON.parse(localStorage.getItem('focus_mision') || 'null') } catch { return null }
+}
 
 export default function App() {
   const [session,  setSession]  = useState(null)
   const [perfil,   setPerfil]   = useState(null)
   const [puntos,   setPuntos]   = useState(0)
-  const [activeTab, setActiveTab] = useState('timer')
+  const [activeTab, setActiveTab] = useState('misiones')
   const [loading,  setLoading]  = useState(true)
   const [pointsAnim, setPointsAnim] = useState(false)
   const [errorMeta, setErrorMeta] = useState(null)
   const prevPuntosRef = useRef(0)
+  const usuarioRef = useRef(null) // usuario cuyo perfil ya se cargó
+  const [misionFoco, setMisionFoco] = useState(leerMisionFoco)
+  const [inicioFoco, setInicioFoco] = useState(0)
+
+  useEffect(() => {
+    try {
+      if (misionFoco) localStorage.setItem('focus_mision', JSON.stringify(misionFoco))
+      else localStorage.removeItem('focus_mision')
+    } catch { /* sin almacenamiento */ }
+  }, [misionFoco])
+
+  const enfocar = (t) => {
+    const { id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi } = t
+    setMisionFoco({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi })
+    setInicioFoco(n => n + 1)
+    setActiveTab('timer')
+  }
+
+  // "¿La terminó?" → Sí: se completa en Todoist y el servidor suma los puntos.
+  const terminarMision = async (m) => {
+    const r = await llamarTodoist('complete', { id: m.id, esperado: m.due?.date || null })
+    if (typeof r?.puntos_totales === 'number') setPuntos(r.puntos_totales)
+    celebrarResultado(r)
+    refrescarJuego()
+    return r
+  }
   const recompensasApi = useRecompensas(session?.user?.id)
+  const { juego, refrescar: refrescarJuego, celebrar, celebrarResultado, avisos } = useJuego(session?.user?.id)
+  const agenda = useAgenda(!!session)
 
   // Animar badge cuando suben puntos
   useEffect(() => {
@@ -34,10 +73,15 @@ export default function App() {
       else setLoading(false)
     })
 
+    // Supabase avisa SIGNED_IN / TOKEN_REFRESHED cada vez que la pestaña vuelve
+    // a tener foco. Solo se recarga el perfil si cambió el usuario; si no, la
+    // pantalla de carga desmontaba Misiones y el Temporizador a media acción.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
-      if (session) fetchOrCreatePerfil(session.user.id)
-      else {
+      if (session) {
+        if (session.user.id !== usuarioRef.current) fetchOrCreatePerfil(session.user.id)
+      } else {
+        usuarioRef.current = null
         setPerfil(null)
         setPuntos(0)
         setLoading(false)
@@ -48,6 +92,7 @@ export default function App() {
   }, [])
 
   const fetchOrCreatePerfil = async (userId) => {
+    usuarioRef.current = userId
     setLoading(true)
     let { data, error } = await supabase
       .from('perfiles')
@@ -104,6 +149,7 @@ export default function App() {
         <div className="header-center">
           <nav className="main-nav">
             {[
+              { id: 'misiones', label: 'Misiones' },
               { id: 'timer', label: 'Temporizador' },
               { id: 'store', label: 'Recompensas'  },
               { id: 'stats', label: 'Estadísticas' },
@@ -129,13 +175,30 @@ export default function App() {
       </header>
 
       <main className="app-main">
+        <Hud juego={juego} puntos={puntos} refrescar={refrescarJuego} agenda={agenda}
+          nombre={(session.user.user_metadata?.nombre || session.user.email || '').split('@')[0]} />
+        <Avisos avisos={avisos} />
         {errorMeta && (
           <div className="error-message">{errorMeta}
             <button className="btn-ghost small" onClick={() => setErrorMeta(null)}>✕</button>
           </div>
         )}
-        {activeTab === 'timer' && (
+        {activeTab === 'misiones' && (
+          <Misiones puntos={puntos} setPuntos={setPuntos} onEnfocar={enfocar}
+            juego={juego} refrescarJuego={refrescarJuego} celebrar={celebrar} celebrarResultado={celebrarResultado} agenda={agenda} />
+        )}
+        {/* El Temporizador nunca se desmonta: si termina mientras está en otra
+            pestaña, la sesión igual se guarda y suma sus puntos. */}
+        <div style={{ display: activeTab === 'timer' ? 'contents' : 'none' }}>
           <Timer
+            activo={activeTab === 'timer'}
+            mision={misionFoco}
+            inicioFoco={inicioFoco}
+            onTerminarMision={terminarMision}
+            onSoltarMision={() => setMisionFoco(null)}
+            onSesionGuardada={(r) => { celebrarResultado(r); refrescarJuego() }}
+            proximoEvento={agenda.proximo}
+            ventana={agenda.ventana}
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
@@ -149,12 +212,12 @@ export default function App() {
               setPerfil(p => ({ ...p, meta_diaria_minutos: mins }))
             }}
           />
-        )}
+        </div>
         {activeTab === 'store' && (
           <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} {...recompensasApi} />
         )}
         {activeTab === 'stats' && (
-          <Stats userId={session.user.id} />
+          <Stats userId={session.user.id} juego={juego} />
         )}
       </main>
     </div>
