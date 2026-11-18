@@ -5,7 +5,8 @@ import {
   llamarTodoist, ordenar, esJefe, puntosDe, cuandoTexto, opcionesPosponer,
 } from '../lib/todoist'
 import { supabase } from '../lib/supabase'
-import { recomendar, afinidad } from '../lib/juego'
+import { recomendar, afinidad, noCabe } from '../lib/juego'
+import { horaCorta, textoEnMinutos } from '../lib/useAgenda'
 
 // Sonido corto de "misión cumplida" (respeta el volumen de la app).
 function sonar(tipo = 'hecho') {
@@ -28,7 +29,7 @@ function sonar(tipo = 'hecho') {
 const ANIMOS = ['¡Eso es! Una menos 💥', '¡Qué nivel! 🔥', 'Misión cumplida 🏅', '¡Imparable! 🚀', 'Su yo del futuro le agradece 🙌', '¡Tuanis! Siga así 🎯']
 const etiqueta = (l) => l.replace(/_/g, ' ')
 
-export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refrescarJuego, celebrar, celebrarResultado }) {
+export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refrescarJuego, celebrar, celebrarResultado, agenda }) {
   const [tareas, setTareas]       = useState([])
   const [proyectos, setProyectos] = useState({})
   const [cargando, setCargando]   = useState(true)
@@ -154,9 +155,10 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
     const elegida = lista.find(t => t.id === actualId)
     if (elegida) return elegida
     const libres = lista.filter(t => !saltadas.has(t.id))
-    return recomendar(libres.length ? libres : lista, juego?.energia) || null
-  }, [lista, actualId, saltadas, juego?.energia])
+    return recomendar(libres.length ? libres : lista, juego?.energia, agenda?.ventana ?? null) || null
+  }, [lista, actualId, saltadas, juego?.energia, agenda?.ventana])
   const esRecomendada = !!(actual && juego?.energia && juego.energia !== 'media' && afinidad(actual, juego.energia) > 0)
+  const sinTiempo = !!(actual && agenda?.proximo && noCabe(actual, agenda.ventana))
 
   // ── Detalle de la misión actual: contexto, veces pospuesta (zombi) y pasos ──
   const det = actual ? detalles[actual.id] : null
@@ -392,6 +394,13 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
                 <div className="mis-etiquetas">{actual.etiquetas.map(l => <span key={l}>{etiqueta(l)}</span>)}</div>
               )}
               {actual.descripcion && <div className="mis-desc">{actual.descripcion}</div>}
+
+              {sinTiempo && (
+                <div className="mis-sin-tiempo">
+                  ⏰ No le da tiempo: esta misión dura {actual.duracion} min y «{agenda.proximo.titulo}» empieza {textoEnMinutos(agenda.ventana)} ({horaCorta(agenda.proximo.inicio)}).
+                  <span> Haga una más corta, pártala en pasos o avance solo un rato.</span>
+                </div>
+              )}
 
               <div className="mis-contexto">
                 <div className="mis-contexto-titulo">

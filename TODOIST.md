@@ -123,11 +123,34 @@ Todo lo calcula el servidor (`src/schema.sql`, sección v6); el navegador nunca 
 
 Instalación: correr `src/schema.sql` (o solo el cambio v5→v6) y volver a desplegar la función `todoist`.
 
+## Etapa 5: Google Calendar y Spotify
+
+**📅 Calendario** (solo lectura, gratis, sin Google Cloud):
+- Arriba se ve el próximo evento ("📅 Almuerzo en 30 min (12:00 pm)") o el que está en curso.
+- Si la misión actual dura más que el tiempo libre antes del próximo evento, avisa; y la misión
+  recomendada prefiere las que sí caben.
+- En el Temporizador avisa si el pomodoro se cruza con un evento y ofrece acortarlo.
+- No cuentan los eventos de todo el día, los cancelados ni las reuniones que usted rechazó.
+- Configuración: secreto `GOOGLE_ICS_URL` en Supabase (Edge Functions → Secrets) con la
+  "Dirección secreta en formato iCal" de cada calendario (Google Calendar → Configuración →
+  su calendario → Integrar el calendario). Varios calendarios: separados por un espacio.
+  Es como una contraseña: quien la tenga ve su calendario. Si se filtra, en esa misma pantalla
+  se puede "Restablecer" y poner la nueva.
+
+**🎵 Spotify** (reproductor incrustado; sirve con cuenta gratis o Premium):
+- En el Temporizador, "Música de enfoque": pegue el enlace de una playlist y Guardar
+  (en Spotify: ⋯ → Compartir → Copiar enlace). Se guarda en su perfil (`guardar_spotify`).
+- El Temporizador no se apaga al cambiar de pestaña, así que la música sigue sonando.
+- "Abrir en la app de Spotify" y la opción "Abrirla sola en Modo enfoque".
+- Para escuchar canciones completas en el reproductor, inicie sesión en Spotify en ese navegador.
+
+Instalación: correr la sección v7 de `src/schema.sql` y volver a desplegar la función `todoist`.
+
 ## Atajos de teclado (en la pestaña Misiones)
 `C` completar · `P` posponer · `S` saltar · `D` eliminar · `F` modo enfoque · `Esc` cerrar menú
 
-## Próximas etapas
+## Etapas
 2. ✅ Puntos por lo que complete fuera de la app (app de Todoist, coach).
 3. ✅ Pomodoro amarrado a la misión, contexto por tarea y tareas zombi.
 4. ✅ Gamificación completa: combo, cofres, retos, insignias, jefe de proyecto y estadísticas.
-5. Google Calendar y Spotify.
+5. ✅ Google Calendar y Spotify.

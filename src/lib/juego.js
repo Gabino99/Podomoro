@@ -52,22 +52,29 @@ const PREFIERE = {
 }
 
 // Puntaje de afinidad de una tarea con la energía del momento (más alto = mejor).
-export function afinidad(t, energia) {
-  if (!energia || energia === 'media') return 0
-  const etiquetas = t.etiquetas ?? []
-  let s = etiquetas.filter(e => PREFIERE[energia].includes(e)).length * 2
-  if (energia === 'baja' && t.duracion && t.duracion <= 15) s += 2
-  if (energia === 'baja' && t.duracion && t.duracion >= 60) s -= 2
-  if (energia === 'alta' && t.duracion && t.duracion <= 10) s -= 1
+// ventana: minutos libres antes del próximo evento del calendario (null = sin evento cerca).
+export function afinidad(t, energia, ventana = null) {
+  let s = 0
+  if (energia && energia !== 'media') {
+    const etiquetas = t.etiquetas ?? []
+    s += etiquetas.filter(e => PREFIERE[energia].includes(e)).length * 2
+    if (energia === 'baja' && t.duracion && t.duracion <= 15) s += 2
+    if (energia === 'baja' && t.duracion && t.duracion >= 60) s -= 2
+    if (energia === 'alta' && t.duracion && t.duracion <= 10) s -= 1
+  }
+  if (ventana != null && t.duracion && t.duracion > ventana) s -= 5   // no le da tiempo
   return s
 }
 
+// ¿Le da tiempo antes del próximo evento?
+export const noCabe = (t, ventana) => ventana != null && !!t?.duracion && t.duracion > ventana
+
 // La misión recomendada: la de mejor afinidad; en empate, la primera del orden normal
-// (jefes vencidos primero, luego por hora). Con energía media, la primera.
-export function recomendar(lista, energia) {
+// (jefes vencidos primero, luego por hora). Sin energía ni evento cerca, la primera.
+export function recomendar(lista, energia, ventana = null) {
   if (!lista.length) return null
-  if (!energia || energia === 'media') return lista[0]
-  let mejor = lista[0], top = afinidad(lista[0], energia)
-  for (const t of lista) { const a = afinidad(t, energia); if (a > top) { top = a; mejor = t } }
+  if ((!energia || energia === 'media') && ventana == null) return lista[0]
+  let mejor = lista[0], top = afinidad(lista[0], energia, ventana)
+  for (const t of lista) { const a = afinidad(t, energia, ventana); if (a > top) { top = a; mejor = t } }
   return mejor
 }

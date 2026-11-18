@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
---  FOCUS — Esquema SQL para Supabase (v6)
+--  FOCUS — Esquema SQL para Supabase (v7)
 --  Ejecutar en: Supabase > SQL Editor > New Query
 --  Es repetible: se puede correr en una base nueva o en
 --  la ya existente sin perder datos.
@@ -901,3 +901,35 @@ GRANT EXECUTE ON FUNCTION public.cobrar_reto(TEXT)        TO authenticated;
 GRANT EXECUTE ON FUNCTION public.registrar_energia(TEXT)  TO authenticated;
 GRANT EXECUTE ON FUNCTION public.estado_juego()           TO authenticated;
 GRANT EXECUTE ON FUNCTION public.estadisticas_juego(INT)  TO authenticated;
+
+-- ═══════════════════════════════════════════════════════
+--  v7 — Música de enfoque (Spotify)
+--  · perfiles.spotify_url: playlist (o álbum) para el modo enfoque.
+--  · Se guarda con guardar_spotify(), que solo acepta enlaces de Spotify
+--    y los deja en forma limpia: https://open.spotify.com/<tipo>/<id>
+-- ═══════════════════════════════════════════════════════
+ALTER TABLE public.perfiles ADD COLUMN IF NOT EXISTS spotify_url TEXT;
+
+CREATE OR REPLACE FUNCTION public.guardar_spotify(p_url TEXT)
+RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_uid UUID := auth.uid(); m TEXT[]; v_limpia TEXT;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'No autorizado'; END IF;
+  IF coalesce(trim(p_url), '') <> '' THEN
+    m := regexp_match(trim(p_url), '^https://open\.spotify\.com/(?:intl-[a-z]{2}(?:-[a-z]{2})?/)?(playlist|album|artist|show)/([A-Za-z0-9]{10,40})');
+    IF m IS NULL THEN
+      m := regexp_match(trim(p_url), '^spotify:(playlist|album|artist|show):([A-Za-z0-9]{10,40})$');
+    END IF;
+    IF m IS NULL THEN
+      RETURN json_build_object('exito', false, 'mensaje', 'Ese no parece un enlace de Spotify (playlist, álbum, artista o pódcast).');
+    END IF;
+    v_limpia := 'https://open.spotify.com/' || m[1] || '/' || m[2];
+  END IF;
+  INSERT INTO public.perfiles (user_id) VALUES (v_uid) ON CONFLICT (user_id) DO NOTHING;
+  UPDATE public.perfiles SET spotify_url = v_limpia WHERE user_id = v_uid;
+  RETURN json_build_object('exito', true, 'spotify_url', v_limpia);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guardar_spotify(TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.guardar_spotify(TEXT) TO authenticated;

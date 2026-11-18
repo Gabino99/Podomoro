@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { rangoDe, ENERGIAS } from '../lib/juego'
+import { horaCorta, textoEnMinutos } from '../lib/useAgenda'
 
 // Cuenta regresiva del combo (mm:ss).
 function useRestante(hasta) {
@@ -16,7 +17,7 @@ function useRestante(hasta) {
 }
 
 // Panel de personaje: nivel, XP, misiones de hoy, combo, racha, escudos y energía.
-export default function Hud({ juego, puntos, nombre, refrescar }) {
+export default function Hud({ juego, puntos, nombre, refrescar, agenda }) {
   const restante = useRestante(juego?.combo > 1 ? juego.combo_vence : null)
   const [eligiendo, setEligiendo] = useState(false)
   if (!juego) return null
@@ -65,6 +66,16 @@ export default function Hud({ juego, puntos, nombre, refrescar }) {
               {ENERGIAS.map(e => <button key={e.id} onClick={() => ponerEnergia(e.id)}>{e.emoji} {e.id}</button>)}
             </div>
           )}
+        {agenda?.enCurso && (
+          <span className="hud-chip evento ahora" title="Evento en curso en su calendario">🔴 Ahora: {agenda.enCurso.titulo} (hasta {horaCorta(agenda.enCurso.fin)})</span>
+        )}
+        {agenda?.proximo && (
+          <span className={`hud-chip evento ${agenda.ventana <= 15 ? 'pronto' : ''}`} title="Próximo evento de su Google Calendar">
+            📅 {agenda.proximo.titulo} {agenda.ventana < 180
+              ? `${textoEnMinutos(agenda.ventana)} (${horaCorta(agenda.proximo.inicio)})`
+              : `a las ${horaCorta(agenda.proximo.inicio)}`}
+          </span>
+        )}
         <span className="hud-chip" title="Tapan días sin actividad para no perder la racha (máx. 3)">🛡️ {juego.escudos} escudo{juego.escudos === 1 ? '' : 's'}</span>
         {juego.dobles > 0 && <span className="hud-chip dorado">✨ Próxima misión ×2</span>}
         <span className="hud-chip">⬡ {Math.floor(puntos)} pts</span>

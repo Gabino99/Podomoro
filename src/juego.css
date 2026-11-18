@@ -95,3 +95,25 @@ button.hud-chip:hover { border-color: var(--xp); color: var(--text-1); }
   .juego-dos { grid-template-columns: 1fr; }
   .avisos { bottom: 16px; right: 16px; left: 16px; max-width: none; }
 }
+
+/* ── Etapa 5: calendario y música ── */
+.hud-chip.evento { border-color: rgba(34,211,238,0.45); color: var(--text-1); }
+.hud-chip.evento.pronto { border-color: var(--amber); color: var(--amber-bright); background: var(--amber-glow); }
+.hud-chip.evento.ahora { border-color: rgba(239,68,68,0.55); color: #fca5a5; }
+.mis-sin-tiempo { font-size: 0.82rem; line-height: 1.45; color: var(--amber-bright); background: var(--amber-glow); border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; }
+.mis-sin-tiempo span { color: var(--text-2); }
+.aviso-agenda { width: 100%; max-width: 520px; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; font-size: 0.84rem; color: var(--amber-bright); background: var(--amber-glow); border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; }
+.aviso-agenda span { flex: 1; min-width: 200px; }
+.aviso-agenda button { background: var(--amber); color: #2a1600; font-weight: 800; font-size: 0.8rem; padding: 0.35rem 0.7rem; border-radius: 6px; }
+.musica { width: 100%; max-width: 520px; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.8rem; display: flex; flex-direction: column; gap: 0.55rem; }
+.musica-titulo { font-family: var(--pixel); font-size: 0.58rem; color: #1db954; letter-spacing: 0.04em; }
+.musica-player { width: 100%; border-radius: 12px; border: 0; }
+.musica-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-2); }
+.musica-fila button { background: var(--bg-2); border: 1px solid var(--border-active); color: var(--text-1); padding: 0.35rem 0.7rem; border-radius: 6px; font-size: 0.8rem; font-weight: 700; }
+.musica-fila button:hover { border-color: #1db954; }
+.musica-fila button:disabled { opacity: 0.5; }
+.musica-fila label { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+.musica-fila input[type="text"], .musica-fila input:not([type]) { flex: 1; min-width: 200px; background: var(--bg-3); border: 1px solid var(--border); color: var(--text-1); border-radius: 6px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.82rem; }
+.musica-cambiar { margin-left: auto; }
+.musica-editar p { font-size: 0.8rem; color: var(--text-2); margin-bottom: 0.4rem; }
+.musica-error { font-size: 0.78rem; color: #fca5a5; }

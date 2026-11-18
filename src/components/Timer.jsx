@@ -4,6 +4,8 @@ import { WORK_SESSIONS, BREAK_SESSIONS, CATEGORIAS, MAX_HISTORY } from '../lib/c
 import { playWorkComplete, playBreakComplete, setVolume, getVolume } from '../lib/sounds'
 import { proximaMeta } from '../lib/useRecompensas'
 import { fechaCR, diasHasta } from '../lib/fechas'
+import { horaCorta, textoEnMinutos } from '../lib/useAgenda'
+import MusicaEnfoque from './MusicaEnfoque'
 
 function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   const [editing, setEditing] = useState(false)
@@ -96,6 +98,10 @@ export default function Timer({
   onTerminarMision,          // async (mision) => respuesta de la Edge Function
   onSoltarMision,
   onSesionGuardada,          // (respuesta de registrar_sesion) => celebrar insignias y refrescar el juego
+  proximoEvento = null,      // próximo evento de Google Calendar { titulo, inicio, fin }
+  ventana = null,            // minutos que faltan para ese evento
+  spotifyUrl = null,
+  onSpotifyGuardado,
 }) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
@@ -461,6 +467,15 @@ export default function Timer({
         </div>
       </div>
 
+      {mode === 'work' && !isRunning && !isComplete && proximoEvento && ventana != null && workDuration > ventana && (
+        <div className="aviso-agenda">
+          <span>⏰ «{proximoEvento.titulo}» empieza {textoEnMinutos(ventana)} ({horaCorta(proximoEvento.inicio)}): un pomodoro de {workDuration} min no cabe.</span>
+          {ventana - 2 >= 5 && (
+            <button onClick={() => handleWorkDurationChange(ventana - 2)}>Ajustar a {ventana - 2} min</button>
+          )}
+        </div>
+      )}
+
       {preguntaMision && mision && (
         <div className="foco-pregunta">
           <p>⏱️ ¡Pomodoro terminado! ¿Terminó «{mision.contenido}»?</p>
@@ -516,6 +531,8 @@ export default function Timer({
             value={nota} onChange={e => setNota(e.target.value)} maxLength={120} />
         </div>
       )}
+
+      <MusicaEnfoque url={spotifyUrl} onGuardada={onSpotifyGuardado} />
 
       {sessionHistory.length > 0 ? (
         <div className="session-history">

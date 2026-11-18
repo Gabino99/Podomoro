@@ -18,11 +18,13 @@
 //    partir    → { id, pasos[] } crea subtareas para hoy
 //    soltar    → { id } p4 + 🗑️_Superflua + 30 días
 //    jefe      → { cambiar?, proyecto_id? } jefe de proyecto: vida y derrota (+200)
+//    agenda    → próximos eventos de Google Calendar (secreto GOOGLE_ICS_URL)
 //    sync      → suma puntos por lo completado fuera de la app (app de
 //                Todoist, coach…). También la llama el cron cada 10 min
 //                con el encabezado x-cron-secret (ver supabase/cron_todoist.sql).
 // ═══════════════════════════════════════════════════════
 import { createClient } from "npm:@supabase/supabase-js@2";
+import ICAL from "npm:ical.js@2.1.0";
 
 const TD = "https://api.todoist.com/api/v1";
 const TOKEN = Deno.env.get("TODOIST_TOKEN") ?? "";
@@ -358,6 +360,80 @@ async function jefeDeProyecto(userId: string, body: any) {
   };
 }
 
+// ── Agenda de Google Calendar (etapa 5) ───────────────────
+// Secreto GOOGLE_ICS_URL: la "Dirección secreta en formato iCal" de uno o varios
+// calendarios (separadas por espacio o salto de línea). Solo lectura; nunca sale del servidor.
+const ICS_URLS = (Deno.env.get("GOOGLE_ICS_URL") ?? "").split(/\s+/).filter((u) => /^https:\/\//i.test(u));
+
+type Evento = { titulo: string; inicio: string; fin: string };
+
+// Eventos con hora (no "todo el día") que se cruzan con [desde, hasta). Expande repeticiones,
+// respeta excepciones (instancias movidas o canceladas) y quita los que el usuario rechazó.
+function eventosDeIcs(texto: string, desde: Date, hasta: Date, correo: string): Evento[] {
+  const cal = new ICAL.Component(ICAL.parse(texto));
+  for (const tz of cal.getAllSubcomponents("vtimezone")) {
+    try { ICAL.TimezoneService.register(new ICAL.Timezone(tz)); } catch { /* ya registrada */ }
+  }
+  const maestros = new Map<string, any>();
+  const sueltos: any[] = [];
+  const excepciones: any[] = [];
+  for (const ve of cal.getAllSubcomponents("vevent")) {
+    const ev = new ICAL.Event(ve);
+    if (ev.isRecurrenceException()) excepciones.push(ev);
+    else if (ev.isRecurring()) maestros.set(ev.uid, ev);
+    else sueltos.push(ev);
+  }
+  for (const ex of excepciones) {
+    const m = maestros.get(ex.uid);
+    if (m) m.relateException(ex); else sueltos.push(ex);
+  }
+
+  const rechazado = (ev: any) => (ev.attendees ?? []).some((a: any) =>
+    String(a.getFirstValue() ?? "").toLowerCase() === `mailto:${correo}` &&
+    String(a.getParameter("partstat") ?? "").toUpperCase() === "DECLINED");
+  const cancelado = (ev: any) => String(ev.component.getFirstPropertyValue("status") ?? "").toUpperCase() === "CANCELLED";
+  const out: Evento[] = [];
+  const agregar = (item: any, ini: Date, fin: Date) => {
+    if (item.startDate?.isDate || cancelado(item) || rechazado(item)) return;
+    if (ini < hasta && fin > desde) out.push({ titulo: String(item.summary || "(sin título)").slice(0, 120), inicio: ini.toISOString(), fin: fin.toISOString() });
+  };
+
+  for (const ev of sueltos) {
+    if (!ev.startDate || ev.startDate.isDate) continue;
+    const ini = ev.startDate.toJSDate();
+    agregar(ev, ini, ev.endDate ? ev.endDate.toJSDate() : ini);
+  }
+  for (const ev of maestros.values()) {
+    if (ev.startDate.isDate) continue;
+    const it = ev.iterator();
+    for (let i = 0, n = it.next(); n && i < 20000; i++, n = it.next()) {
+      const d = ev.getOccurrenceDetails(n);
+      const ini = d.startDate.toJSDate();
+      if (ini >= hasta) break;
+      agregar(d.item, ini, d.endDate.toJSDate());
+    }
+  }
+  return out;
+}
+
+async function agenda(horas = 18) {
+  if (!ICS_URLS.length) return { ok: true, configurado: false, eventos: [] };
+  const ahora = new Date();
+  const hasta = new Date(ahora.getTime() + horas * 3600e3);
+  const todos: Evento[] = [];
+  for (const url of ICS_URLS) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`No se pudo leer el calendario (${r.status}). Revise el secreto GOOGLE_ICS_URL.`);
+    todos.push(...eventosDeIcs(await r.text(), ahora, hasta, ALLOWED_EMAIL));
+  }
+  const vistos = new Set<string>();
+  const eventos = todos
+    .sort((a, b) => a.inicio.localeCompare(b.inicio))
+    .filter((e) => { const k = e.titulo + e.inicio; if (vistos.has(k)) return false; vistos.add(k); return true; })
+    .slice(0, 20);
+  return { ok: true, configurado: true, eventos };
+}
+
 // El cron no tiene sesión de usuario: se identifica con la clave guardada en Vault.
 async function esCron(req: Request) {
   const clave = req.headers.get("x-cron-secret");
@@ -443,6 +519,12 @@ Deno.serve(async (req) => {
     // Jefe de proyecto: un proyecto es el monstruo; su vida = tareas activas no repetitivas.
     // { cambiar: true, proyecto_id? } elige otro. Si la vida llega a 0, el servidor da +200.
     if (action === "jefe") return json(await jefeDeProyecto(user.id, body));
+
+    // Próximos eventos de Google Calendar (para avisar si no le da tiempo).
+    if (action === "agenda") {
+      try { return json(await agenda()); }
+      catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
+    }
 
     if (action === "sync") return json(await sincronizar(user.id));
 

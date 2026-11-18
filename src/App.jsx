@@ -10,6 +10,8 @@ import { llamarTodoist } from './lib/todoist'
 import { useJuego } from './lib/useJuego'
 import './juego.css'
 import Hud, { Avisos } from './components/Hud'
+import { useAgenda } from './lib/useAgenda'
+import { abrirEnSpotify, leerAutoSpotify } from './components/MusicaEnfoque'
 
 // Misión amarrada al pomodoro (Modo enfoque). Se guarda para que sobreviva a recargar.
 const leerMisionFoco = () => {
@@ -41,6 +43,7 @@ export default function App() {
     setMisionFoco({ id, contenido, proyecto, proyecto_id, prioridad, duracion, due, zombi })
     setInicioFoco(n => n + 1)
     setActiveTab('timer')
+    if (perfil?.spotify_url && leerAutoSpotify()) abrirEnSpotify(perfil.spotify_url)
   }
 
   // "¿La terminó?" → Sí: se completa en Todoist y el servidor suma los puntos.
@@ -53,6 +56,7 @@ export default function App() {
   }
   const recompensasApi = useRecompensas(session?.user?.id)
   const { juego, refrescar: refrescarJuego, celebrar, celebrarResultado, avisos } = useJuego(session?.user?.id)
+  const agenda = useAgenda(!!session)
 
   // Animar badge cuando suben puntos
   useEffect(() => {
@@ -173,7 +177,7 @@ export default function App() {
       </header>
 
       <main className="app-main">
-        <Hud juego={juego} puntos={puntos} refrescar={refrescarJuego}
+        <Hud juego={juego} puntos={puntos} refrescar={refrescarJuego} agenda={agenda}
           nombre={(session.user.user_metadata?.nombre || session.user.email || '').split('@')[0]} />
         <Avisos avisos={avisos} />
         {errorMeta && (
@@ -183,7 +187,7 @@ export default function App() {
         )}
         {activeTab === 'misiones' && (
           <Misiones puntos={puntos} setPuntos={setPuntos} onEnfocar={enfocar}
-            juego={juego} refrescarJuego={refrescarJuego} celebrar={celebrar} celebrarResultado={celebrarResultado} />
+            juego={juego} refrescarJuego={refrescarJuego} celebrar={celebrar} celebrarResultado={celebrarResultado} agenda={agenda} />
         )}
         {/* El Temporizador nunca se desmonta: si termina mientras está en otra
             pestaña, la sesión igual se guarda y suma sus puntos. */}
@@ -195,6 +199,10 @@ export default function App() {
             onTerminarMision={terminarMision}
             onSoltarMision={() => setMisionFoco(null)}
             onSesionGuardada={(r) => { celebrarResultado(r); refrescarJuego() }}
+            proximoEvento={agenda.proximo}
+            ventana={agenda.ventana}
+            spotifyUrl={perfil?.spotify_url ?? null}
+            onSpotifyGuardado={(url) => setPerfil(p => ({ ...p, spotify_url: url }))}
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
