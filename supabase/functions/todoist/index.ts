@@ -17,6 +17,7 @@
 //    contexto  → { id, texto } guarda "🧠 Contexto: …" como comentario
 //    partir    → { id, pasos[] } crea subtareas para hoy
 //    soltar    → { id } p4 + 🗑️_Superflua + 30 días
+//    jefe      → { cambiar?, proyecto_id? } jefe de proyecto: vida y derrota (+200)
 //    sync      → suma puntos por lo completado fuera de la app (app de
 //                Todoist, coach…). También la llama el cron cada 10 min
 //                con el encabezado x-cron-secret (ver supabase/cron_todoist.sql).
@@ -237,6 +238,8 @@ function misionDeEvento(ev: any, miId: string) {
     prioridad,
     vencida,
     puntos: calcularPuntos(prioridad, dur, vencida),
+    momento: String(ev.event_date),
+    etiquetas: Array.isArray(x.labels) ? x.labels.map(String) : null,
   };
 }
 
@@ -263,7 +266,11 @@ async function sincronizar(userId: string) {
     const nombres = Object.fromEntries(proyectos.map((p: any) => [String(p.id), p.name]));
     let nuevas = 0, ganados = 0;
     let total: number | null = null;
+    const cofres: string[] = [];
+    const insignias: string[] = [];
 
+    // En orden de cuándo se completaron, para que el combo se calcule bien.
+    eventos.sort((a: any, b: any) => String(a.event_date).localeCompare(String(b.event_date)));
     for (const ev of eventos) {
       const m = misionDeEvento(ev, String(yo?.id ?? ""));
       if (!m) continue;
@@ -277,18 +284,78 @@ async function sincronizar(userId: string) {
         p_vencida: m.vencida,
         p_puntos: m.puntos,
         p_origen: "todoist",
+        p_momento: m.momento,
+        p_etiquetas: m.etiquetas,
+        p_proyecto_id: m.proyecto_id,
       });
       if (error) throw new Error(`registrar_mision: ${error.message}`);
       total = data?.puntos_totales ?? total;
-      if (data?.nueva) { nuevas++; ganados += data.puntos_ganados ?? 0; }
+      if (data?.nueva) {
+        nuevas++; ganados += data.puntos_ganados ?? 0;
+        if (data.cofre) cofres.push(data.cofre);
+        insignias.push(...(data.insignias ?? []));
+      }
     }
 
     await db.from("sync_todoist").update({ ultima: ahora.toISOString(), ultimo_error: null }).eq("user_id", userId);
-    return { ok: true, revisadas: eventos.length, nuevas, puntos_ganados: ganados, puntos_totales: total };
+    return { ok: true, revisadas: eventos.length, nuevas, puntos_ganados: ganados, puntos_totales: total, cofres, insignias };
   } catch (e) {
     await db.from("sync_todoist").update({ ultimo_error: String((e as Error).message).slice(0, 300) }).eq("user_id", userId);
     throw e;
   }
+}
+
+// ── Jefe de proyecto (etapa 4) ────────────────────────────
+async function jefeDeProyecto(userId: string, body: any) {
+  const db = createClient(SUPABASE_URL, SERVICE_KEY);
+  const [todas, proyectos, actualRes] = await Promise.all([
+    paginar("/tasks"),
+    paginar("/projects"),
+    db.from("jefes_proyecto").select("*").eq("user_id", userId).is("derrotado_en", null).maybeSingle(),
+  ]);
+  // Vida de cada proyecto = tareas activas que no se repiten.
+  const vida: Record<string, number> = {};
+  for (const t of todas) {
+    if (t.checked || t.due?.is_recurring || !t.project_id) continue;
+    const pid = String(t.project_id);
+    vida[pid] = (vida[pid] ?? 0) + 1;
+  }
+  const candidatos = proyectos
+    .filter((p: any) => !p.inbox_project && !p.is_archived && (vida[String(p.id)] ?? 0) > 0)
+    .map((p: any) => ({ id: String(p.id), nombre: String(p.name), hp: vida[String(p.id)] }))
+    .sort((a: any, b: any) => b.hp - a.hp);
+
+  let jefe: any = actualRes.data ?? null;
+  let derrota: any = null;
+  if (jefe && !body.cambiar) {
+    const hp = vida[jefe.proyecto_id] ?? 0;
+    if (hp === 0) {
+      const { data } = await db.rpc("derrotar_jefe", { p_user: userId });
+      derrota = data;
+      jefe = null;          // derrotado (o vaciado sin pelear): toca elegir otro
+    } else {
+      await db.rpc("actualizar_hp_jefe", { p_user: userId, p_hp: hp });
+      jefe.hp_max = Math.max(jefe.hp_max, hp);
+    }
+  }
+  if (!jefe || body.cambiar) {
+    const anterior = actualRes.data?.proyecto_id ?? null;
+    const pedido = body.proyecto_id ? candidatos.find((c: any) => c.id === String(body.proyecto_id)) : null;
+    const elegido = pedido ?? candidatos.find((c: any) => c.id !== anterior) ?? candidatos[0] ?? null;
+    if (elegido) {
+      const { error } = await db.rpc("elegir_jefe", { p_user: userId, p_proyecto_id: elegido.id, p_nombre: elegido.nombre, p_hp: elegido.hp });
+      if (error) throw new Error(`elegir_jefe: ${error.message}`);
+      jefe = { proyecto_id: elegido.id, nombre: elegido.nombre, hp_max: elegido.hp };
+    } else {
+      jefe = null;
+    }
+  }
+  return {
+    ok: true,
+    jefe: jefe ? { proyecto_id: jefe.proyecto_id, nombre: jefe.nombre, hp: vida[jefe.proyecto_id] ?? 0, hp_max: Math.max(jefe.hp_max, vida[jefe.proyecto_id] ?? 0) } : null,
+    derrota,
+    candidatos,
+  };
 }
 
 // El cron no tiene sesión de usuario: se identifica con la clave guardada en Vault.
@@ -355,13 +422,27 @@ Deno.serve(async (req) => {
         paginar("/tasks/filter", { query: "today | overdue" }),
         paginar("/projects"),
       ]);
+      const activas = tareas.filter((t) => !t.checked);
+      // Tablero vacío (hoy + vencidas en cero): cuenta para la insignia "5 vaciados".
+      let vaciado = null;
+      if (activas.length === 0) {
+        try {
+          const { data } = await createClient(SUPABASE_URL, SERVICE_KEY).rpc("registrar_vaciado", { p_user: user.id });
+          vaciado = data;
+        } catch { /* opcional */ }
+      }
       return json({
         ok: true,
         hoy: hoyCR(),
-        tareas: tareas.filter((t) => !t.checked).map(normalizar),
+        tareas: activas.map(normalizar),
         proyectos: proyectos.map((p) => ({ id: String(p.id), nombre: p.name, inbox: !!p.inbox_project })),
+        vaciado,
       });
     }
+
+    // Jefe de proyecto: un proyecto es el monstruo; su vida = tareas activas no repetitivas.
+    // { cambiar: true, proyecto_id? } elige otro. Si la vida llega a 0, el servidor da +200.
+    if (action === "jefe") return json(await jefeDeProyecto(user.id, body));
 
     if (action === "sync") return json(await sincronizar(user.id));
 
@@ -397,6 +478,9 @@ Deno.serve(async (req) => {
         p_prioridad: prioridadUI(t),
         p_vencida: vencida,
         p_puntos: puntos,
+        p_zombi: zombi,
+        p_etiquetas: Array.isArray(t.labels) ? t.labels : null,
+        p_proyecto_id: t.project_id ? String(t.project_id) : null,
       });
       if (error) {
         // La tarea sí se completó en Todoist; solo falló sumar los puntos.

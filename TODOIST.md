@@ -99,11 +99,33 @@ SELECT origen, contenido, puntos, created_at FROM public.misiones ORDER BY creat
 
 Instalación: solo volver a desplegar la función `todoist` (no hay SQL nuevo).
 
+## Etapa 4: gamificación
+
+Todo lo calcula el servidor (`src/schema.sql`, sección v6); el navegador nunca manda XP ni puntos.
+
+- **XP y niveles:** XP = todo lo ganado (nunca baja); los puntos son el saldo para recompensas.
+  Nivel n → n+1 pide 100 + (n-1)·50 XP. Rangos: Aprendiz (1), Escudero (3), Caballero (6),
+  Paladín (10), Leyenda (15). Al instalar v6 se sumó el XP de todo el historial.
+- **Combo:** otra misión antes de 45 min → ×1, ×1.5, ×2, ×2.5, ×3. Arriba se ve la cuenta regresiva.
+- **Racha:** días con al menos una misión o un pomodoro. Los escudos (máx. 3) tapan días perdidos.
+- **Cofres (32 % por misión):** legendario 4 % (+100), XP doble 8 % (la siguiente misión ×2),
+  +25 8 %, escudo 6 % (si ya tiene 3, +25), carga de combo 6 %.
+- **Retos de hoy:** 3 misiones +30 · 1 jefe vencido +25 · 25 min de enfoque +25 · 6 misiones +50.
+  Se cobran con el botón "¡Cobrar!"; el servidor revisa que se cumplieron.
+- **Energía:** alta prefiere 🎯_Hiperfoco, 🔬_Acetilcolina y ⭐_Propósito; baja prefiere
+  🧠_Baja_Atención, 🟣_Dopamina y tareas de 15 min o menos. Esa misión sale primero (⭐ RECOMENDADA).
+- **Jefe de proyecto:** el proyecto con más tareas pendientes (no repetitivas) es el monstruo.
+  Vaciarlo da +200, pero solo si completó al menos una de sus tareas (borrarlas no cuenta).
+- **17 insignias** y estadísticas (XP por día, mejores horas, proyectos) en la pestaña Estadísticas.
+- "5 vaciados" = 5 días dejando en cero el tablero de hoy + vencidas.
+
+Instalación: correr `src/schema.sql` (o solo el cambio v5→v6) y volver a desplegar la función `todoist`.
+
 ## Atajos de teclado (en la pestaña Misiones)
 `C` completar · `P` posponer · `S` saltar · `D` eliminar · `F` modo enfoque · `Esc` cerrar menú
 
 ## Próximas etapas
 2. ✅ Puntos por lo que complete fuera de la app (app de Todoist, coach).
 3. ✅ Pomodoro amarrado a la misión, contexto por tarea y tareas zombi.
-4. Gamificación completa: combo, cofres, retos, insignias, jefe de proyecto y estadísticas.
+4. ✅ Gamificación completa: combo, cofres, retos, insignias, jefe de proyecto y estadísticas.
 5. Google Calendar y Spotify.

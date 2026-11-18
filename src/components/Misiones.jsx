@@ -4,6 +4,8 @@ import { getVolume } from '../lib/sounds'
 import {
   llamarTodoist, ordenar, esJefe, puntosDe, cuandoTexto, opcionesPosponer,
 } from '../lib/todoist'
+import { supabase } from '../lib/supabase'
+import { recomendar, afinidad } from '../lib/juego'
 
 // Sonido corto de "misión cumplida" (respeta el volumen de la app).
 function sonar(tipo = 'hecho') {
@@ -26,7 +28,7 @@ function sonar(tipo = 'hecho') {
 const ANIMOS = ['¡Eso es! Una menos 💥', '¡Qué nivel! 🔥', 'Misión cumplida 🏅', '¡Imparable! 🚀', 'Su yo del futuro le agradece 🙌', '¡Tuanis! Siga así 🎯']
 const etiqueta = (l) => l.replace(/_/g, ' ')
 
-export default function Misiones({ puntos, setPuntos, onEnfocar }) {
+export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refrescarJuego, celebrar, celebrarResultado }) {
   const [tareas, setTareas]       = useState([])
   const [proyectos, setProyectos] = useState({})
   const [cargando, setCargando]   = useState(true)
@@ -43,6 +45,10 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
   const [ctxTexto, setCtxTexto]   = useState('')
   const [ctxEstado, setCtxEstado] = useState('')        // '' | 'guardando' | 'guardado'
   const [pasosTexto, setPasosTexto] = useState('')
+  const [jefe, setJefe]           = useState(null)      // { proyecto_id, nombre, hp, hp_max }
+  const [candidatos, setCandidatos] = useState([])
+  const [cargandoJefe, setCargandoJefe] = useState(true)
+  const [cobrando, setCobrando]   = useState(null)
   const enCurso = useRef(new Set())        // ids con una acción viajando a Todoist
   const ocultas = useRef(new Map())        // id -> ms: no mostrarlas aunque una recarga las traiga
   const avisoT = useRef(null)
@@ -62,13 +68,14 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
       const limite = Date.now() - 5 * 60 * 1000
       for (const [id, ms] of ocultas.current) if (ms < limite && !enCurso.current.has(id)) ocultas.current.delete(id)
       setTareas(d.tareas.filter(t => !ocultas.current.has(t.id)))
+      if (d.vaciado?.nuevo) { celebrar?.('🌴 ¡Tablero vacío! No quedan misiones para hoy.', 'grande'); celebrarResultado?.(d.vaciado) }
       setProyectos(Object.fromEntries(d.proyectos.map(p => [p.id, p.nombre])))
       setError(null)
     } catch (e) {
       if (!silencioso) setError(e.message)
     }
     setCargando(false)
-  }, [])
+  }, [celebrar, celebrarResultado])
 
   // Puntos por lo que completó fuera de la app (app de Todoist, coach…).
   // El cron del servidor lo hace cada 10 min; aquí se adelanta al abrir la pestaña.
@@ -81,9 +88,49 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
       if (r?.nuevas > 0) {
         if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
         mostrarAviso(`+${r.puntos_ganados} pts por ${r.nuevas} misión${r.nuevas > 1 ? 'es' : ''} hecha${r.nuevas > 1 ? 's' : ''} fuera de la app 🎉`)
+        celebrarResultado?.(r)
+        refrescarJuego?.()
       }
     } catch { /* silencioso: el cron lo reintenta */ }
-  }, [setPuntos, mostrarAviso])
+  }, [setPuntos, mostrarAviso, celebrarResultado, refrescarJuego])
+
+  // ── Jefe de proyecto: vida = tareas activas no repetitivas del proyecto ──
+  const cargarJefe = useCallback(async (opciones = {}) => {
+    try {
+      const r = await llamarTodoist('jefe', opciones)
+      if (r.derrota?.exito) {
+        celebrar?.(`🐉 ¡Derrotó al jefe ${r.derrota.nombre}! +${r.derrota.premio} pts`, 'grande')
+        if (typeof r.derrota.puntos_totales === 'number') setPuntos(r.derrota.puntos_totales)
+        celebrarResultado?.(r.derrota)
+        refrescarJuego?.()
+      }
+      setJefe(r.jefe); setCandidatos(r.candidatos ?? [])
+    } catch { /* el jefe es opcional */ }
+    setCargandoJefe(false)
+  }, [celebrar, celebrarResultado, refrescarJuego, setPuntos])
+  useEffect(() => { cargarJefe() }, [cargarJefe])
+
+  const cambiarJefe = () => {
+    if (!candidatos.length) return
+    const i = candidatos.findIndex(c => c.id === jefe?.proyecto_id)
+    const sig = candidatos[(i + 1) % candidatos.length]
+    setCargandoJefe(true)
+    cargarJefe({ cambiar: true, proyecto_id: sig.id })
+  }
+
+  // ── Retos de hoy: el servidor revisa que de verdad se cumplieron ──
+  const cobrarReto = async (reto) => {
+    if (cobrando) return
+    setCobrando(reto.id)
+    const { data, error } = await supabase.rpc('cobrar_reto', { p_reto: reto.id })
+    setCobrando(null)
+    if (error) { setError('No se pudo cobrar el reto: ' + error.message); return }
+    if (!data?.exito) { mostrarAviso(data?.mensaje || 'Todavía no lo cumple.'); return }
+    if (typeof data.puntos_totales === 'number') setPuntos(data.puntos_totales)
+    celebrar?.(`🏆 Reto cumplido: ${reto.nombre} +${data.premio}`, 'cofre')
+    celebrarResultado?.(data)
+    refrescarJuego?.()
+  }
 
   useEffect(() => { cargar() }, [cargar])
   useEffect(() => {
@@ -104,8 +151,12 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
   ), [tareas, filtro, hoy])
 
   const actual = useMemo(() => {
-    return lista.find(t => t.id === actualId) || lista.find(t => !saltadas.has(t.id)) || lista[0] || null
-  }, [lista, actualId, saltadas])
+    const elegida = lista.find(t => t.id === actualId)
+    if (elegida) return elegida
+    const libres = lista.filter(t => !saltadas.has(t.id))
+    return recomendar(libres.length ? libres : lista, juego?.energia) || null
+  }, [lista, actualId, saltadas, juego?.energia])
+  const esRecomendada = !!(actual && juego?.energia && juego.energia !== 'media' && afinidad(actual, juego.energia) > 0)
 
   // ── Detalle de la misión actual: contexto, veces pospuesta (zombi) y pasos ──
   const det = actual ? detalles[actual.id] : null
@@ -168,7 +219,10 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
     if (r.ok === false && r.motivo === 'ya_completada') { mostrarAviso('Esa ya estaba completada en Todoist.'); return }
     if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
     if (r.error_puntos) setError('Se completó en Todoist, pero no se pudieron sumar los puntos: ' + r.error_puntos)
-  }, [ejecutar, hoy, mostrarAviso, setPuntos, detalles])
+    celebrarResultado?.(r)
+    refrescarJuego?.()
+    if (jefe && t.proyecto_id === jefe.proyecto_id) cargarJefe()
+  }, [ejecutar, hoy, mostrarAviso, setPuntos, detalles, celebrarResultado, refrescarJuego, jefe, cargarJefe])
 
   // Posponer: si es zombi (3+ veces) y no tiene pasos, primero hay que partirla o soltarla.
   const abrirPosponer = useCallback(() => {
@@ -260,7 +314,58 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
       )}
       {pendientes > 0 && <div className="mis-sync">⏳ Guardando {pendientes} en Todoist…</div>}
 
-      <div className="mis-layout">
+      <div className={`mis-layout ${juego ? 'con-lateral' : ''}`}>
+        {juego && (
+          <aside className="mis-lateral">
+            <div className="lat-bloque">
+              <div className="lat-titulo">🏆 Retos de hoy</div>
+              {(juego.retos ?? []).map(reto => (
+                <div key={reto.id} className={`reto ${reto.cobrado ? 'cobrado' : ''}`}>
+                  <div className="reto-nombre">{reto.cobrado ? '✅' : '🎯'} {reto.nombre}</div>
+                  <div className="reto-barra"><div style={{ width: `${Math.round((reto.progreso / reto.meta) * 100)}%` }} /></div>
+                  <div className="reto-pie">
+                    <span>{reto.progreso} / {reto.meta}</span>
+                    {reto.cobrado
+                      ? <span className="reto-ok">Cobrado</span>
+                      : reto.progreso >= reto.meta
+                        ? <button className="reto-cobrar" onClick={() => cobrarReto(reto)} disabled={cobrando === reto.id}>¡Cobrar! +{reto.premio}</button>
+                        : <span className="reto-premio">+{reto.premio} pts</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="lat-bloque">
+              <div className="lat-titulo">🐉 Jefe de proyecto</div>
+              {cargandoJefe ? <div className="jefe-vacio">Cargando vida…</div>
+                : !jefe ? <div className="jefe-vacio">No hay proyectos con tareas pendientes. 🌴</div>
+                : (
+                  <div className="jefe">
+                    <div className="jefe-monstruo" aria-hidden>{jefe.hp_max >= 10 ? '🐉' : jefe.hp_max >= 5 ? '👹' : '👾'}</div>
+                    <div className="jefe-nombre">{jefe.nombre}</div>
+                    <div className="jefe-vida" title={`${jefe.hp} de ${jefe.hp_max} tareas`}>
+                      <div style={{ width: `${Math.round((jefe.hp / Math.max(1, jefe.hp_max)) * 100)}%` }} />
+                      <span>❤️ {jefe.hp} / {jefe.hp_max}</span>
+                    </div>
+                    <div className="jefe-pista">Vacíe el proyecto para derrotarlo: +200</div>
+                    {candidatos.length > 1 && <button className="jefe-cambiar" onClick={cambiarJefe}>🔄 Cambiar de jefe</button>}
+                  </div>
+                )}
+            </div>
+
+            <div className="lat-bloque lat-atajos">
+              <div className="lat-titulo">⌨️ Atajos</div>
+              <div><kbd>C</kbd> completar · <kbd>P</kbd> posponer · <kbd>S</kbd> saltar</div>
+              <div><kbd>D</kbd> eliminar · <kbd>F</kbd> modo enfoque</div>
+              <div className="lat-glosario">
+                👹 <b>Jefe:</b> vencida de días anteriores, ×1.5.<br />
+                ⚡ <b>Combo:</b> otra misión antes de 45 min sube ×0.5 (hasta ×3).<br />
+                🧟 <b>Zombi:</b> pospuesta 3+ veces; partirla o soltarla. ×1.5.<br />
+                🎁 <b>Cofres:</b> cada misión puede soltar uno (32 %).
+              </div>
+            </div>
+          </aside>
+        )}
         <section className={`mis-card ${actual && esJefe(actual, hoy) ? 'jefe' : ''}`}>
           {!actual ? (
             <div className="mis-vacio">
@@ -274,6 +379,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar }) {
                 {actual.prioridad < 4 && <span className={`mis-tag p${actual.prioridad}`}>P{actual.prioridad}</span>}
                 {actual.due?.recurrente && <span className="mis-tag">🔁 HÁBITO</span>}
                 {det?.zombi && <span className="mis-tag zombi" title="Pospuesta 3 veces o más: terminarla vale x1.5">🧟 ZOMBI ×{det.reprogramadas}</span>}
+                {esRecomendada && <span className="mis-tag reco" title={`Va con su energía ${juego.energia}`}>⭐ RECOMENDADA</span>}
                 <span className="mis-tag pts">+{puntosDe(actual, hoy, det?.zombi)} pts</span>
               </div>
               <h2 className="mis-titulo">{actual.contenido}</h2>

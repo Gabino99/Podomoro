@@ -7,6 +7,9 @@ import Stats from './components/Stats'
 import Misiones from './components/Misiones'
 import { useRecompensas } from './lib/useRecompensas'
 import { llamarTodoist } from './lib/todoist'
+import { useJuego } from './lib/useJuego'
+import './juego.css'
+import Hud, { Avisos } from './components/Hud'
 
 // Misión amarrada al pomodoro (Modo enfoque). Se guarda para que sobreviva a recargar.
 const leerMisionFoco = () => {
@@ -44,9 +47,12 @@ export default function App() {
   const terminarMision = async (m) => {
     const r = await llamarTodoist('complete', { id: m.id, esperado: m.due?.date || null })
     if (typeof r?.puntos_totales === 'number') setPuntos(r.puntos_totales)
+    celebrarResultado(r)
+    refrescarJuego()
     return r
   }
   const recompensasApi = useRecompensas(session?.user?.id)
+  const { juego, refrescar: refrescarJuego, celebrar, celebrarResultado, avisos } = useJuego(session?.user?.id)
 
   // Animar badge cuando suben puntos
   useEffect(() => {
@@ -167,13 +173,17 @@ export default function App() {
       </header>
 
       <main className="app-main">
+        <Hud juego={juego} puntos={puntos} refrescar={refrescarJuego}
+          nombre={(session.user.user_metadata?.nombre || session.user.email || '').split('@')[0]} />
+        <Avisos avisos={avisos} />
         {errorMeta && (
           <div className="error-message">{errorMeta}
             <button className="btn-ghost small" onClick={() => setErrorMeta(null)}>✕</button>
           </div>
         )}
         {activeTab === 'misiones' && (
-          <Misiones puntos={puntos} setPuntos={setPuntos} onEnfocar={enfocar} />
+          <Misiones puntos={puntos} setPuntos={setPuntos} onEnfocar={enfocar}
+            juego={juego} refrescarJuego={refrescarJuego} celebrar={celebrar} celebrarResultado={celebrarResultado} />
         )}
         {/* El Temporizador nunca se desmonta: si termina mientras está en otra
             pestaña, la sesión igual se guarda y suma sus puntos. */}
@@ -184,6 +194,7 @@ export default function App() {
             inicioFoco={inicioFoco}
             onTerminarMision={terminarMision}
             onSoltarMision={() => setMisionFoco(null)}
+            onSesionGuardada={(r) => { celebrarResultado(r); refrescarJuego() }}
             userId={session.user.id}
             puntos={puntos}
             setPuntos={setPuntos}
@@ -202,7 +213,7 @@ export default function App() {
           <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} {...recompensasApi} />
         )}
         {activeTab === 'stats' && (
-          <Stats userId={session.user.id} />
+          <Stats userId={session.user.id} juego={juego} />
         )}
       </main>
     </div>

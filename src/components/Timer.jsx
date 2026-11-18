@@ -95,6 +95,7 @@ export default function Timer({
   inicioFoco = 0,            // sube cada vez que se pide "Modo enfoque" desde Misiones
   onTerminarMision,          // async (mision) => respuesta de la Edge Function
   onSoltarMision,
+  onSesionGuardada,          // (respuesta de registrar_sesion) => celebrar insignias y refrescar el juego
 }) {
   const [mode,           setMode]           = useState('work')
   const [workDuration,   setWorkDuration]   = useState(25)
@@ -217,6 +218,7 @@ export default function Timer({
       if (currentMode === 'work') {
         setPuntos(data.puntos_totales)
         puntosRef.current = data.puntos_totales
+        onSesionGuardada?.(data)
       }
       setSessionHistory(prev => [
         { minutos: minutosGanados, hora: new Date().toLocaleTimeString(), tipo: currentMode === 'work' ? 'trabajo' : 'descanso', categoria },
@@ -259,7 +261,7 @@ export default function Timer({
       console.error(err)
       setError('No se pudo guardar la sesión, así que los puntos no se sumaron. Revise su conexión.')
     }
-  }, [userId, setPuntos, categoria, nota, autoMode, breakDuration, workDuration])
+  }, [userId, setPuntos, categoria, nota, autoMode, breakDuration, workDuration, onSesionGuardada])
 
   useEffect(() => {
     if (!isRunning) return

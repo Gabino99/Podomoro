@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { CATEGORIAS } from '../lib/constants'
+import EstadisticasJuego from './EstadisticasJuego'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, AreaChart, Area, Cell,
@@ -85,7 +86,7 @@ function exportCSV(sesiones) {
 }
 
 // ── Componente principal ──────────────────────────────────
-export default function Stats({ userId }) {
+export default function Stats({ userId, juego }) {
   const [sesiones, setSesiones]       = useState([])
   const [loading,  setLoading]        = useState(true)
   const [error,    setError]          = useState(null)
@@ -213,6 +214,8 @@ export default function Stats({ userId }) {
           ↓ Exportar CSV
         </button>
       </div>
+
+      <EstadisticasJuego juego={juego} />
 
       <div className="stats-cards-grid">
         <StatCard label="Hoy"         value={stats.minutosHoy}    unit="min"  sub="minutos de foco" />
