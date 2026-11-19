@@ -26,6 +26,8 @@ export default function Hud({ juego, puntos, nombre, refrescar, agenda }) {
   const pct = Math.min(100, Math.round((juego.xp_nivel / juego.xp_siguiente) * 100))
   const comboActivo = juego.combo > 1 && restante
   const energia = ENERGIAS.find(e => e.id === juego.energia)
+  const tope = Number(juego.reglas?.tope_bonos) || 0
+  const bonos = Number(juego.bonos_hoy) || 0
 
   const ponerEnergia = async (id) => {
     setEligiendo(false)
@@ -77,6 +79,12 @@ export default function Hud({ juego, puntos, nombre, refrescar, agenda }) {
           </span>
         )}
         <span className="hud-chip" title="Tapan días sin actividad para no perder la racha (máx. 3)">🛡️ {juego.escudos} escudo{juego.escudos === 1 ? '' : 's'}</span>
+        {tope > 0 && (
+          <span className={`hud-chip ${bonos >= tope ? 'pronto' : ''}`}
+            title="Bonos de hoy (misiones, retos, cofres…). El enfoque no cuenta para el tope. Se reinicia a medianoche.">
+            🎯 Bonos {Math.min(bonos, tope)}/{tope}{bonos >= tope ? ' · tope' : ''}
+          </span>
+        )}
         {juego.dobles > 0 && <span className="hud-chip dorado">✨ Próxima misión ×2</span>}
         <span className="hud-chip">⬡ {Math.floor(puntos)} pts</span>
       </div>

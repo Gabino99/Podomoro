@@ -164,10 +164,22 @@ export default function Timer({
     return () => window.removeEventListener('keydown', handleKey)
   }, [activo, vista, isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
 
+  // Al cruzar la medianoche (o volver a la pestaña al día siguiente) se reinicia el contador de hoy.
+  useEffect(() => {
+    let dia = fechaCR()
+    const revisar = () => {
+      const hoy = fechaCR()
+      if (hoy !== dia) { dia = hoy; setMinutosHoy(0); loadTodayStats() }
+    }
+    const iv = setInterval(revisar, 30000)
+    document.addEventListener('visibilitychange', revisar)
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', revisar) }
+  }, [userId])
+
   const loadTodayStats = async () => {
     const today = fechaCR()
     const desde = new Date()
-    desde.setDate(desde.getDate() - 31)
+    desde.setHours(desde.getHours() - 36) // basta para cubrir "hoy" en hora de Costa Rica
     const { data, error } = await supabase
       .from('sesiones')
       .select('duracion_minutos, created_at')
