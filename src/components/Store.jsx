@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { PREMIOS } from '../lib/constants'
 import { diasHasta } from '../lib/fechas'
+import ReglasPuntos from './ReglasPuntos'
 
 const EMOJIS = ['🎁', '✈️', '🏖️', '🍺', '🎮', '📱', '🍕', '🎬', '🛍️', '💝', '⚔️', '🌿']
 const FORM_VACIO = { nombre: '', descripcion: '', emoji: '🎁', costo: '', fecha_limite: '', recurrente: true }
@@ -75,7 +76,7 @@ function Plazo({ fecha, falta }) {
   )
 }
 
-export default function Store({ userId, puntos, setPuntos, recompensas, cargando, error, crear, actualizar, borrar, canjear }) {
+export default function Store({ userId, puntos, setPuntos, refrescarJuego, recompensas, cargando, error, crear, actualizar, borrar, canjear }) {
   const [confirmando, setConfirmando] = useState(null)  // id a canjear
   const [borrando,    setBorrando]    = useState(null)  // id a borrar
   const [editando,    setEditando]    = useState(null)  // recompensa | 'nueva' | null
@@ -229,6 +230,8 @@ export default function Store({ userId, puntos, setPuntos, recompensas, cargando
           })}
         </div>
       )}
+
+      <ReglasPuntos onCambio={refrescarJuego} />
 
       {historial.length > 0 && (
         <div className="canje-history">

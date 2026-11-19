@@ -209,6 +209,7 @@ export default function App() {
             puntos={puntos}
             setPuntos={setPuntos}
             recompensas={recompensasApi.recompensas}
+            reglas={juego?.reglas}
             metaDiaria={perfil?.meta_diaria_minutos ?? 120}
             onUpdateMeta={async (mins) => {
               const { error } = await supabase.rpc('actualizar_meta_diaria', {
@@ -220,7 +221,7 @@ export default function App() {
           />
         </div>
         {activeTab === 'store' && (
-          <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} {...recompensasApi} />
+          <Store userId={session.user.id} puntos={puntos} setPuntos={setPuntos} refrescarJuego={refrescarJuego} {...recompensasApi} />
         )}
         {activeTab === 'stats' && (
           <Stats userId={session.user.id} juego={juego} />

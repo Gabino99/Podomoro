@@ -18,7 +18,7 @@ export const INSIGNIAS = [
   { id: 'racha_7',      emoji: '🌋', nombre: 'Racha de 7',    desc: '7 días seguidos con actividad' },
   { id: 'racha_30',     emoji: '☄️', nombre: 'Racha de 30',   desc: '30 días seguidos con actividad' },
   { id: 'jefes_10',     emoji: '👹', nombre: 'Cazajefes',     desc: 'Derrote 10 jefes vencidos' },
-  { id: 'combo_x3',     emoji: '⚡', nombre: 'Combo ×3',      desc: 'Llegue al combo máximo' },
+  { id: 'combo_x3',     emoji: '⚡', nombre: 'Combo máximo',  desc: 'Llegue al combo máximo de sus reglas' },
   { id: 'enfoque_300',  emoji: '🧘', nombre: '300 min de enfoque', desc: 'Acumule 300 minutos de pomodoro' },
   { id: 'vaciados_5',   emoji: '🌴', nombre: '5 vaciados',    desc: 'Deje el tablero de hoy en cero 5 días' },
   { id: 'cazazombis',   emoji: '🧟', nombre: 'Cazazombis',    desc: 'Termine una tarea zombi' },
@@ -31,12 +31,16 @@ export const INSIGNIAS = [
 ]
 export const insignia = (id) => INSIGNIAS.find(i => i.id === id) ?? { id, emoji: '🏅', nombre: id, desc: '' }
 
-export const COFRES = {
-  legendario: { emoji: '🌟', texto: '¡Cofre legendario! +100' },
-  doble:      { emoji: '✨', texto: 'Cofre: la próxima misión vale doble' },
-  mas25:      { emoji: '🎁', texto: 'Cofre: +25 puntos' },
-  escudo:     { emoji: '🛡️', texto: 'Cofre: +1 escudo de racha' },
-  combo:      { emoji: '⚡', texto: 'Cofre: carga de combo (+1 escalón)' },
+// Texto de un cofre; los puntos salen de las reglas del usuario (o de lo que otorgó el servidor).
+export function textoCofre(id, reglas = null, puntos = null) {
+  switch (id) {
+    case 'legendario': return { emoji: '🌟', texto: `¡Cofre legendario! +${puntos ?? reglas?.cofre_legendario ?? 20}` }
+    case 'doble':      return { emoji: '✨', texto: 'Cofre: la próxima misión vale doble' }
+    case 'mas25':      return { emoji: '🎁', texto: `Cofre: +${puntos ?? reglas?.cofre_mas ?? 5} puntos` }
+    case 'escudo':     return { emoji: '🛡️', texto: 'Cofre: +1 escudo de racha' }
+    case 'combo':      return { emoji: '⚡', texto: 'Cofre: carga de combo (+1 escalón)' }
+    default:           return null
+  }
 }
 
 export const ENERGIAS = [
