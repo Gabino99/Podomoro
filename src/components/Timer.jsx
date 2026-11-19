@@ -98,7 +98,8 @@ function VolumeSlider() {
 }
 
 export default function Timer({
-  userId, puntos, setPuntos, recompensas = [], reglas = null, racha = 0,   // racha: la calcula el servidor (estado_juego) metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
+  userId, puntos, setPuntos, recompensas = [], reglas = null, racha = 0,   // racha: la calcula el servidor (estado_juego)
+  metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
   activo = true,             // la pestaña está a la vista (el Temporizador sigue vivo aunque no lo esté)
   mision = null,             // misión de Todoist amarrada al pomodoro (Modo enfoque)
   inicioFoco = 0,            // sube cada vez que se pide "Modo enfoque" desde Misiones
