@@ -135,3 +135,6 @@ button.hud-chip:hover { border-color: var(--xp); color: var(--text-1); }
 .reglas-etq small { font-size: 0.7rem; color: var(--text-3); }
 .reglas-input { width: 5.5rem; text-align: right; flex-shrink: 0; }
 .reglas-input.mal { border-color: var(--red); }
+
+/* ── Cronómetro: selector Temporizador | Cronómetro ── */
+.vista-toggle .mode-btn:disabled { opacity: 0.45; cursor: not-allowed; }

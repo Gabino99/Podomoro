@@ -164,7 +164,7 @@ DECLARE
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'No autorizado'; END IF;
   IF p_tipo NOT IN ('trabajo','descanso') THEN RAISE EXCEPTION 'Tipo inválido'; END IF;
-  IF p_duracion IS NULL OR p_duracion < 1 OR p_duracion > 180 THEN
+  IF p_duracion IS NULL OR p_duracion < 1 OR p_duracion > 240 THEN   -- el cronómetro cuenta hasta 4 h
     RAISE EXCEPTION 'Duración inválida';
   END IF;
 

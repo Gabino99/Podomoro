@@ -7,6 +7,8 @@ import { fechaCR, diasHasta } from '../lib/fechas'
 import { horaCorta, textoEnMinutos } from '../lib/useAgenda'
 import SelectorMision from './SelectorMision'
 
+const CRONO_MAX_MIN = 240   // lo máximo que cuenta una sesión de cronómetro (igual que el servidor)
+
 function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(meta)
@@ -120,6 +122,11 @@ export default function Timer({
   const [preguntaMision, setPreguntaMision] = useState(false)   // "¿La terminó?" al acabar el pomodoro
   const [cerrandoMision, setCerrandoMision] = useState(false)
   const [avisoMision,    setAvisoMision]    = useState(null)
+  // Cronómetro: cuenta hacia arriba; el inicio queda en localStorage para sobrevivir recargas.
+  const [vista,       setVista]       = useState(() => localStorage.getItem('crono_inicio') ? 'crono' : 'timer')
+  const [cronoInicio, setCronoInicio] = useState(() => parseInt(localStorage.getItem('crono_inicio')) || null)
+  const [cronoSeg,    setCronoSeg]    = useState(0)
+  const [avisoCrono,  setAvisoCrono]  = useState(null)
 
   const intervalRef = useRef(null)
   const puntosRef   = useRef(puntos)
@@ -127,7 +134,7 @@ export default function Timer({
   useEffect(() => { misionRef.current = mision; if (!mision) setPreguntaMision(false) }, [mision])
 
   useEffect(() => { puntosRef.current = puntos }, [puntos])
-  useEffect(() => { onRunningChange?.(isRunning)  }, [isRunning])
+  useEffect(() => { onRunningChange?.(isRunning || !!cronoInicio) }, [isRunning, cronoInicio])
   useEffect(() => { onCompleteChange?.(isComplete) }, [isComplete])
 
   useEffect(() => {
@@ -138,7 +145,7 @@ export default function Timer({
   // #2 — Atajo de teclado: Espacio para iniciar/pausar
   useEffect(() => {
     const handleKey = (e) => {
-      if (!activo) return
+      if (!activo || vista === 'crono') return
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
       if (e.code === 'Space') {
         e.preventDefault()
@@ -149,7 +156,7 @@ export default function Timer({
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [activo, isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
+  }, [activo, vista, isRunning, isComplete, secondsLeft, mode, workDuration, breakDuration, categoria])
 
   const loadTodayStats = async () => {
     const today = fechaCR()
@@ -209,7 +216,7 @@ export default function Timer({
   const totalSeconds = useMemo(() => mode === 'work' ? workDuration * 60 : breakDuration * 60, [mode, workDuration, breakDuration])
   const progress     = useMemo(() => ((totalSeconds - secondsLeft) / totalSeconds) * 100, [totalSeconds, secondsLeft])
 
-  const completeSession = useCallback(async (currentMode, minutosGanados) => {
+  const completeSession = useCallback(async (currentMode, minutosGanados, esCrono = false) => {
     try {
       // El servidor guarda la sesión y suma los puntos en un solo paso.
       const { data, error: rpcError } = await supabase.rpc('registrar_sesion', {
@@ -245,8 +252,8 @@ export default function Timer({
         return
       }
 
-      // #10 — Auto-pomodoro
-      if (autoMode) {
+      // #10 — Auto-pomodoro (el cronómetro nunca arranca un descanso solo)
+      if (autoMode && !esCrono) {
         if (currentMode === 'work') {
           setShowBreakOffer(false)
           setMode('break')
@@ -311,7 +318,8 @@ export default function Timer({
     const m = misionRef.current
     setAvisoMision(null); setPreguntaMision(false)
     setNota((m.contenido || '').slice(0, 120))
-    if (isRunning) return
+    if (isRunning || localStorage.getItem('crono_inicio')) return
+    setVista('timer')
     const dur = m.duracion >= 5 && m.duracion <= 90 ? m.duracion : workDuration
     clearInterval(intervalRef.current); clearTimerStorage()
     setMode('work'); setWorkDuration(dur); setSecondsLeft(dur * 60)
@@ -359,7 +367,37 @@ export default function Timer({
   const handleModeChange = (newMode) => { setMode(newMode); resetTimer(newMode) }
   const handleWorkDurationChange  = (m) => { if (isRunning) return; setWorkDuration(m);  if (mode === 'work')  { setSecondsLeft(m * 60); setIsComplete(false) } }
   const handleBreakDurationChange = (m) => { if (isRunning) return; setBreakDuration(m); if (mode === 'break') { setSecondsLeft(m * 60); setIsComplete(false) } }
-  const startBreakNow = () => { setShowBreakOffer(false); setMode('break'); setSecondsLeft(breakDuration * 60); setIsComplete(false); setPendingBreak(true) }
+  // ── Cronómetro: cuenta hacia arriba hasta pulsar Terminar (máx. CRONO_MAX_MIN) ──
+  useEffect(() => {
+    if (!cronoInicio) return
+    const tick = () => setCronoSeg(Math.max(0, Math.floor((Date.now() - cronoInicio) / 1000)))
+    tick()
+    const iv = setInterval(tick, 500)
+    return () => clearInterval(iv)
+  }, [cronoInicio])
+
+  const cronoIniciar = () => {
+    if (cronoInicio || isRunning) return
+    const t = Date.now()
+    localStorage.setItem('crono_inicio', String(t))
+    setAvisoCrono(null); setShowBreakOffer(false); setError(null)
+    setCronoSeg(0); setCronoInicio(t)
+  }
+  const cronoTerminar = () => {
+    if (!cronoInicio) return
+    const minutos = Math.floor((Date.now() - cronoInicio) / 60000)
+    localStorage.removeItem('crono_inicio'); setCronoInicio(null); setCronoSeg(0)
+    if (minutos < 1) { setAvisoCrono('Duró menos de 1 minuto: no se guardó.'); return }
+    if (minutos > CRONO_MAX_MIN) setAvisoCrono(`Se contaron ${CRONO_MAX_MIN} min (el máximo por sesión).`)
+    completeSession('work', Math.min(minutos, CRONO_MAX_MIN), true)
+  }
+  const cronoDescartar = () => {
+    if (!cronoInicio) return
+    if (!window.confirm('¿Descartar el cronómetro sin guardar los minutos?')) return
+    localStorage.removeItem('crono_inicio'); setCronoInicio(null); setCronoSeg(0)
+  }
+
+  const startBreakNow = () => { setVista('timer'); setShowBreakOffer(false); setMode('break'); setSecondsLeft(breakDuration * 60); setIsComplete(false); setPendingBreak(true) }
 
   const toggleAutoMode = () => {
     const next = !autoMode
@@ -369,6 +407,10 @@ export default function Timer({
 
   const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0')
   const seconds = (secondsLeft % 60).toString().padStart(2, '0')
+  const cH = Math.floor(cronoSeg / 3600), cM = Math.floor((cronoSeg % 3600) / 60), cS = cronoSeg % 60
+  const cronoTexto = `${cH > 0 ? cH + ':' : ''}${String(cM).padStart(2, '0')}:${String(cS).padStart(2, '0')}`
+  const cronoMin   = Math.min(CRONO_MAX_MIN, Math.floor(cronoSeg / 60))
+  const cronoPts   = Math.round(cronoMin * (reglas?.min_enfoque ?? 1))
   const radius  = 130
   const circumference = 2 * Math.PI * radius
   const strokeDashoffset = circumference - (progress / 100) * circumference
@@ -398,7 +440,7 @@ export default function Timer({
           )}
         </div>
       )}
-      {!mision && onElegirMision && mode === 'work' && !isRunning && !isComplete && !preguntaMision && (
+      {!mision && onElegirMision && (vista === 'crono' ? !cronoInicio : mode === 'work' && !isRunning && !isComplete) && !preguntaMision && (
         <SelectorMision onElegir={onElegirMision} reglas={reglas} />
       )}
       {avisoMision && !mision && (
@@ -407,6 +449,12 @@ export default function Timer({
         </div>
       )}
 
+      <div className="mode-toggle vista-toggle">
+        <button className={`mode-btn ${vista === 'timer' ? 'active' : ''}`} onClick={() => setVista('timer')} disabled={!!cronoInicio}>⏳ Temporizador</button>
+        <button className={`mode-btn ${vista === 'crono' ? 'active' : ''}`} onClick={() => setVista('crono')} disabled={isRunning}>⏱️ Cronómetro</button>
+      </div>
+
+      {vista === 'timer' && (<>
       <div className="mode-toggle">
         <button className={`mode-btn ${mode === 'work'  ? 'active' : ''}`} onClick={() => handleModeChange('work')}>Trabajo</button>
         <button className={`mode-btn ${mode === 'break' ? 'active' : ''}`} onClick={() => handleModeChange('break')}>Descanso</button>
@@ -444,7 +492,9 @@ export default function Timer({
         </div>
       </div>
 
-      {mode === 'work' && !isRunning && !isComplete && (
+      </>)}
+
+      {(vista === 'crono' ? !cronoInicio : mode === 'work' && !isRunning && !isComplete) && (
         <div className="categoria-selector show-labels">
           {CATEGORIAS.map(c => (
             <button key={c.id} className={`cat-btn ${categoria === c.id ? 'active' : ''}`}
@@ -455,6 +505,27 @@ export default function Timer({
         </div>
       )}
 
+      {vista === 'crono' && (
+        <div className={`timer-circle-wrapper ${cronoInicio ? 'running' : ''}`}>
+          <svg className="timer-svg" viewBox="0 0 300 300">
+            <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
+            <circle className="circle-progress" cx="150" cy="150" r={radius} fill="none" strokeWidth="6"
+              strokeLinecap="round" strokeDasharray={circumference}
+              strokeDashoffset={cronoInicio ? circumference - ((cronoSeg % 60) / 60) * circumference : circumference}
+              transform="rotate(-90 150 150)" />
+          </svg>
+          <div className="timer-display">
+            <span className="time-text">{cronoTexto}</span>
+            <span className="time-label">
+              {cronoInicio
+                ? `+${cronoPts} pts${cronoSeg >= CRONO_MAX_MIN * 60 ? ' · máximo' : ''}`
+                : 'Cuenta hacia arriba'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {vista === 'timer' && (
       <div className={`timer-circle-wrapper ${isRunning ? 'running' : ''}`}>
         <svg className="timer-svg" viewBox="0 0 300 300">
           <circle className="circle-bg" cx="150" cy="150" r={radius} fill="none" strokeWidth="6" />
@@ -479,7 +550,15 @@ export default function Timer({
         </div>
       </div>
 
-      {mode === 'work' && !isRunning && !isComplete && proximoEvento && ventana != null && workDuration > ventana && (
+      )}
+
+      {avisoCrono && vista === 'crono' && !cronoInicio && (
+        <div className="next-prize-banner all-unlocked">{avisoCrono}
+          <button className="btn-ghost small" onClick={() => setAvisoCrono(null)}>✕</button>
+        </div>
+      )}
+
+      {vista === 'timer' && mode === 'work' && !isRunning && !isComplete && proximoEvento && ventana != null && workDuration > ventana && (
         <div className="aviso-agenda">
           <span>⏰ «{proximoEvento.titulo}» empieza {textoEnMinutos(ventana)} ({horaCorta(proximoEvento.inicio)}): un pomodoro de {workDuration} min no cabe.</span>
           {ventana - 2 >= 5 && (
@@ -511,7 +590,20 @@ export default function Timer({
         </div>
       )}
 
-      {!showBreakOffer && !preguntaMision && (
+      {vista === 'crono' && !showBreakOffer && !preguntaMision && (
+        <div className="timer-controls">
+          {!cronoInicio ? (
+            <button className="btn-primary large" onClick={cronoIniciar}>Iniciar</button>
+          ) : (
+            <>
+              <button className="btn-primary large" onClick={cronoTerminar}>Terminar y guardar</button>
+              <button className="btn-ghost" onClick={cronoDescartar}>Descartar</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {vista === 'timer' && !showBreakOffer && !preguntaMision && (
         <div className="timer-controls">
           {!isRunning && !isComplete && (
             <button className="btn-primary large" onClick={handleStart}>
@@ -526,7 +618,7 @@ export default function Timer({
         </div>
       )}
 
-      {!isRunning && !isComplete && (
+      {vista === 'timer' && !isRunning && !isComplete && (
         <div className="timer-settings-row">
           <button className={`auto-mode-btn ${autoMode ? 'active' : ''}`} onClick={toggleAutoMode}>
             {autoMode ? '🔄 Auto' : '🔄 Manual'}
@@ -536,7 +628,7 @@ export default function Timer({
         </div>
       )}
 
-      {mode === 'work' && !isRunning && !isComplete && (
+      {(vista === 'crono' ? !cronoInicio : mode === 'work' && !isRunning && !isComplete) && (
         <div className="nota-input-wrapper">
           <input className="nota-input" type="text"
             placeholder="Nota opcional (¿en qué trabajaste?)"
