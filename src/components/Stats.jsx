@@ -181,17 +181,11 @@ export default function Stats({ userId, juego }) {
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: TZ })
     const minutosHoy = sesiones.filter(s => toLocalDate(s.created_at) === hoy).reduce((a, s) => a + s.duracion_minutos, 0)
     const bestDay    = weekData.reduce((b, d) => d.minutos > b.minutos ? d : b, { minutos: 0, dia: '-' })
-    let streak = 0
-    for (let i = 0; i < 30; i++) {
-      const d = new Date(); d.setDate(d.getDate() - i)
-      const day = d.toLocaleDateString('en-CA', { timeZone: TZ })
-      if (allSesiones.some(s => toLocalDate(s.created_at) === day)) streak++
-      else if (i > 0) break
-    }
+    const streak = juego?.racha ?? 0   // misma racha que el resto de la app: la calcula el servidor
     const peakHour = hourData.reduce((b, h) => h.minutos > b.minutos ? h : b, { minutos: 0, hora: '-' })
     const totalMin  = allSesiones.reduce((a, s) => a + s.duracion_minutos, 0)
     return { minutosHoy, bestDay, streak, peakHour, totalMin }
-  }, [sesiones, allSesiones, weekData, hourData])
+  }, [sesiones, allSesiones, weekData, hourData, juego?.racha])
 
   if (loading) return (
     <div className="stats-loading">Cargando estadísticas...</div>

@@ -210,6 +210,7 @@ export default function App() {
             setPuntos={setPuntos}
             recompensas={recompensasApi.recompensas}
             reglas={juego?.reglas}
+            racha={juego?.racha ?? 0}
             metaDiaria={perfil?.meta_diaria_minutos ?? 120}
             onUpdateMeta={async (mins) => {
               const { error } = await supabase.rpc('actualizar_meta_diaria', {

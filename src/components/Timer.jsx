@@ -98,7 +98,7 @@ function VolumeSlider() {
 }
 
 export default function Timer({
-  userId, puntos, setPuntos, recompensas = [], reglas = null, metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
+  userId, puntos, setPuntos, recompensas = [], reglas = null, racha = 0,   // racha: la calcula el servidor (estado_juego) metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
   activo = true,             // la pestaña está a la vista (el Temporizador sigue vivo aunque no lo esté)
   mision = null,             // misión de Todoist amarrada al pomodoro (Modo enfoque)
   inicioFoco = 0,            // sube cada vez que se pide "Modo enfoque" desde Misiones
@@ -121,7 +121,6 @@ export default function Timer({
   const [nota,           setNota]           = useState('')
   const [showBreakOffer, setShowBreakOffer] = useState(false)
   const [minutosHoy,     setMinutosHoy]     = useState(0)
-  const [streak,         setStreak]         = useState(0)
   const [autoMode,       setAutoMode]       = useState(() => localStorage.getItem('pomodoro_auto') === 'true')
   const [pendingBreak,   setPendingBreak]   = useState(false)
   const [preguntaMision, setPreguntaMision] = useState(false)   // "¿La terminó?" al acabar el pomodoro
@@ -182,14 +181,6 @@ export default function Timer({
       // Se agrupa por día de Costa Rica (no UTC)
       const dias = data.map(r => ({ dia: fechaCR(r.created_at), min: r.duracion_minutos }))
       setMinutosHoy(dias.filter(r => r.dia === today).reduce((a, r) => a + r.min, 0))
-      const conSesion = new Set(dias.map(r => r.dia))
-      let s = 0
-      for (let i = 0; i < 30; i++) {
-        const d = new Date(); d.setDate(d.getDate() - i)
-        if (conSesion.has(fechaCR(d))) s++
-        else if (i > 0) break
-      }
-      setStreak(s)
     }
   }
 
@@ -483,7 +474,7 @@ export default function Timer({
       {enCola > 0 && <div className="next-prize-banner all-unlocked">⏳ {enCola} sesión{enCola > 1 ? 'es' : ''} pendiente{enCola > 1 ? 's' : ''} de enviar; se reintenta sola.</div>}
 
       <div className="timer-top-row">
-        <StreakBadge streak={streak} />
+        <StreakBadge streak={racha} />
         <NextPrizeBanner puntos={puntos} recompensas={recompensas} />
       </div>
 
