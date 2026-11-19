@@ -1057,3 +1057,51 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.guardar_spotify(TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.guardar_spotify(TEXT) TO authenticated;
+
+-- ═══════════════════════════════════════════════════════
+--  v8 — Endurecimiento de seguridad y rendimiento
+--  (aplicado en Supabase como la migración `focus_v8_seguridad`)
+--  · search_path fijo en las funciones auxiliares.
+--  · Permisos mínimos: `anon` no ve nada; `authenticated` solo lo que usa la app.
+--  · RLS con (select auth.uid()) para evaluarlo una vez por consulta.
+--  · Índices en claves foráneas.
+-- ═══════════════════════════════════════════════════════
+ALTER FUNCTION public._dia_cr(timestamptz)      SET search_path = public;
+ALTER FUNCTION public._xp_para_nivel(int)       SET search_path = public;
+ALTER FUNCTION public._nivel(int)               SET search_path = public;
+ALTER FUNCTION public._rango(int)               SET search_path = public;
+ALTER FUNCTION public._reglas_defecto()         SET search_path = public;
+ALTER FUNCTION public._reglas_rangos()          SET search_path = public;
+
+REVOKE ALL ON public.canjes, public.dias_vaciados, public.insignias, public.jefes_proyecto,
+  public.misiones, public.perfiles, public.recompensas, public.retos_cobrados,
+  public.sesiones, public.sync_todoist, public.xp_eventos FROM anon, authenticated;
+GRANT SELECT ON public.canjes, public.dias_vaciados, public.insignias, public.jefes_proyecto,
+  public.misiones, public.perfiles, public.recompensas, public.retos_cobrados,
+  public.sesiones, public.sync_todoist, public.xp_eventos TO authenticated;
+GRANT INSERT ON public.perfiles TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.recompensas TO authenticated;
+
+ALTER POLICY canjes_select         ON public.canjes         USING ((select auth.uid()) = user_id);
+ALTER POLICY dias_vaciados_select  ON public.dias_vaciados  USING ((select auth.uid()) = user_id);
+ALTER POLICY insignias_select      ON public.insignias      USING ((select auth.uid()) = user_id);
+ALTER POLICY jefes_proyecto_select ON public.jefes_proyecto USING ((select auth.uid()) = user_id);
+ALTER POLICY misiones_select       ON public.misiones       USING ((select auth.uid()) = user_id);
+ALTER POLICY perfiles_select       ON public.perfiles       USING ((select auth.uid()) = user_id);
+ALTER POLICY retos_cobrados_select ON public.retos_cobrados USING ((select auth.uid()) = user_id);
+ALTER POLICY sesiones_select       ON public.sesiones       USING ((select auth.uid()) = user_id);
+ALTER POLICY sync_todoist_select   ON public.sync_todoist   USING ((select auth.uid()) = user_id);
+ALTER POLICY xp_eventos_select     ON public.xp_eventos     USING ((select auth.uid()) = user_id);
+ALTER POLICY recompensas_select    ON public.recompensas    USING ((select auth.uid()) = user_id);
+ALTER POLICY recompensas_delete    ON public.recompensas    USING ((select auth.uid()) = user_id);
+ALTER POLICY recompensas_insert    ON public.recompensas    WITH CHECK ((select auth.uid()) = user_id);
+ALTER POLICY recompensas_update    ON public.recompensas    USING ((select auth.uid()) = user_id) WITH CHECK ((select auth.uid()) = user_id);
+ALTER POLICY perfiles_insert       ON public.perfiles WITH CHECK (
+  (select auth.uid()) = user_id AND puntos_totales = 0 AND xp_total = 0
+  AND racha = 0 AND racha_max = 0 AND escudos = 0 AND combo_n = 0 AND dobles = 0
+  AND combo_max = 1 AND ultimo_dia IS NULL AND combo_en IS NULL AND gamificacion_v6);
+
+CREATE INDEX IF NOT EXISTS sesiones_user_created ON public.sesiones (user_id, created_at);
+CREATE INDEX IF NOT EXISTS canjes_user_id        ON public.canjes (user_id, creado_en);
+CREATE INDEX IF NOT EXISTS canjes_recompensa_id  ON public.canjes (recompensa_id);
+CREATE INDEX IF NOT EXISTS recompensas_user_id   ON public.recompensas (user_id);
