@@ -226,7 +226,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
       if (!r) return
       if (r.ok === false && r.motivo === 'ya_completada') { mostrarAviso('Esa ya estaba completada en Todoist.'); return }
       if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
-      if (r.error_puntos) setError('Se completó en Todoist, pero no se pudieron sumar los puntos: ' + r.error_puntos)
+      if (r.error_puntos) setError('Se completó en Todoist, pero los puntos no se pudieron sumar ahora. Se sumarán solos en la próxima sincronización (' + r.error_puntos + ')')
       celebrarResultado?.(r)
       refrescarJuego?.()
       if (jefe && t.proyecto_id === jefe.proyecto_id) cargarJefe()

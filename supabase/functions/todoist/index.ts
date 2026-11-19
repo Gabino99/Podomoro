@@ -253,7 +253,8 @@ async function sincronizar(userId: string) {
       paginar("/projects"),
     ]);
     const nombres = Object.fromEntries(proyectos.map((p: any) => [String(p.id), p.name]));
-    let nuevas = 0, ganados = 0;
+    let nuevas = 0, ganados = 0, fallos = 0;
+    let ultimoFallo: string | null = null;
     let total: number | null = null;
     const cofres: string[] = [];
     const insignias: string[] = [];
@@ -276,7 +277,11 @@ async function sincronizar(userId: string) {
         p_etiquetas: m.etiquetas,
         p_proyecto_id: m.proyecto_id,
       });
-      if (error) throw new Error(`registrar_mision: ${error.message}`);
+      if (error) {
+        // Una misión que falla no debe frenar al resto; se reintenta en la próxima sincronización.
+        fallos++; ultimoFallo = `registrar_mision: ${error.message}`;
+        continue;
+      }
       total = data?.puntos_totales ?? total;
       if (data?.nueva) {
         nuevas++; ganados += data.puntos_ganados ?? 0;
@@ -285,8 +290,8 @@ async function sincronizar(userId: string) {
       }
     }
 
-    await db.from("sync_todoist").update({ ultima: ahora.toISOString(), ultimo_error: null }).eq("user_id", userId);
-    return { ok: true, revisadas: eventos.length, nuevas, puntos_ganados: ganados, puntos_totales: total, cofres, insignias };
+    await db.from("sync_todoist").update({ ultima: ahora.toISOString(), ultimo_error: ultimoFallo?.slice(0, 300) ?? null }).eq("user_id", userId);
+    return { ok: true, fallos, revisadas: eventos.length, nuevas, puntos_ganados: ganados, puntos_totales: total, cofres, insignias };
   } catch (e) {
     await db.from("sync_todoist").update({ ultimo_error: String((e as Error).message).slice(0, 300) }).eq("user_id", userId);
     throw e;
@@ -537,21 +542,29 @@ Deno.serve(async (req) => {
       await td(`/tasks/${id}/close`, { method: "POST" });
 
       const admin = createClient(SUPABASE_URL, SERVICE_KEY);
-      const { data, error } = await admin.rpc("registrar_mision", {
-        p_user_id: user.id,
-        p_task_id: id,
-        p_ocurrencia: ocurrencia,
-        p_contenido: t.content,
-        p_proyecto: proyecto,
-        p_prioridad: prioridadUI(t),
-        p_vencida: vencida,
-        p_zombi: zombi,
-        p_etiquetas: Array.isArray(t.labels) ? t.labels : null,
-        p_proyecto_id: t.project_id ? String(t.project_id) : null,
-      });
+      // registrar_mision es idempotente (task_id + ocurrencia), así que se puede reintentar sin
+      // duplicar puntos. Un fallo pasajero no debe dejar la misión cerrada y sin cobrar.
+      let data: any = null, error: any = null;
+      for (let intento = 0; intento < 3; intento++) {
+        if (intento) await new Promise((r) => setTimeout(r, 400 * intento));
+        ({ data, error } = await admin.rpc("registrar_mision", {
+          p_user_id: user.id,
+          p_task_id: id,
+          p_ocurrencia: ocurrencia,
+          p_contenido: t.content,
+          p_proyecto: proyecto,
+          p_prioridad: prioridadUI(t),
+          p_vencida: vencida,
+          p_zombi: zombi,
+          p_etiquetas: Array.isArray(t.labels) ? t.labels : null,
+          p_proyecto_id: t.project_id ? String(t.project_id) : null,
+        }));
+        if (!error) break;
+      }
       if (error) {
-        // La tarea sí se completó en Todoist; solo falló sumar los puntos.
-        return json({ ok: true, completada: true, puntos_ganados: 0, error_puntos: error.message });
+        // La tarea sí se completó en Todoist; solo falló sumar los puntos. La sincronización
+        // automática (cron) la vuelve a encontrar en la actividad de Todoist y los suma sola.
+        return json({ ok: true, completada: true, puntos_ganados: 0, error_puntos: error.message, se_recupera: true });
       }
       return json({ ok: true, completada: true, zombi, ...data });
     }
