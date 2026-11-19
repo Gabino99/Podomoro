@@ -9,6 +9,11 @@ import SelectorMision from './SelectorMision'
 
 const CRONO_MAX_MIN = 240   // lo máximo que cuenta una sesión de cronómetro (igual que el servidor)
 
+// Sesiones que no se pudieron guardar (sin red): quedan en este dispositivo y se reintentan.
+const COLA_KEY = 'pomodoro_cola'
+const leerCola = () => { try { return JSON.parse(localStorage.getItem(COLA_KEY) || '[]') } catch { return [] } }
+const guardarCola = (c) => { try { localStorage.setItem(COLA_KEY, JSON.stringify(c)) } catch { /* sin almacenamiento */ } }
+
 function DailyGoalBar({ minutosHoy, meta, onChangeMeta }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(meta)
@@ -127,6 +132,8 @@ export default function Timer({
   const [cronoInicio, setCronoInicio] = useState(() => parseInt(localStorage.getItem('crono_inicio')) || null)
   const [cronoSeg,    setCronoSeg]    = useState(0)
   const [avisoCrono,  setAvisoCrono]  = useState(null)
+  const [perdida,     setPerdida]     = useState(null)   // pomodoro que terminó con la pestaña cerrada
+  const [enCola,      setEnCola]      = useState(() => leerCola().length)
 
   const intervalRef = useRef(null)
   const puntosRef   = useRef(puntos)
@@ -204,7 +211,12 @@ export default function Timer({
     } else if (savedEnd && savedMode) {
       const remaining = Math.round((parseInt(savedEnd) - Date.now()) / 1000)
       if (remaining > 0) { setMode(savedMode); setSecondsLeft(remaining); setIsRunning(true) }
-      else clearTimerStorage()
+      else {
+        // Terminó mientras la pestaña estaba cerrada: se ofrece contarlo (hasta 12 h después).
+        const min = parseInt(savedMode === 'work' ? savedWork : savedBreak)
+        if (savedMode === 'work' && min >= 1 && -remaining < 12 * 3600) setPerdida({ minutos: min, categoria: savedCat || 'general' })
+        clearTimerStorage()
+      }
     }
   }, [])
 
@@ -217,16 +229,28 @@ export default function Timer({
   const progress     = useMemo(() => ((totalSeconds - secondsLeft) / totalSeconds) * 100, [totalSeconds, secondsLeft])
 
   const completeSession = useCallback(async (currentMode, minutosGanados, esCrono = false) => {
+    const envio = {
+      p_duracion:  minutosGanados,
+      p_tipo:      currentMode === 'work' ? 'trabajo' : 'descanso',
+      p_categoria: currentMode === 'work' ? categoria : 'descanso',
+      p_nota:      nota.trim() || null,
+    }
+    // El servidor guarda la sesión y suma los puntos en un solo paso.
+    let data
     try {
-      // El servidor guarda la sesión y suma los puntos en un solo paso.
-      const { data, error: rpcError } = await supabase.rpc('registrar_sesion', {
-        p_duracion:  minutosGanados,
-        p_tipo:      currentMode === 'work' ? 'trabajo' : 'descanso',
-        p_categoria: currentMode === 'work' ? categoria : 'descanso',
-        p_nota:      nota.trim() || null,
-      })
-      if (rpcError || !data?.exito) throw rpcError || new Error('respuesta inválida')
-
+      const r = await supabase.rpc('registrar_sesion', envio)
+      if (r.error || !r.data?.exito) throw r.error || new Error('respuesta inválida')
+      data = r.data
+    } catch (err) {
+      // Sin red u otro fallo: se guarda en este dispositivo y se reintenta solo.
+      console.error(err)
+      const cola = [...leerCola(), envio]
+      guardarCola(cola); setEnCola(cola.length)
+      clearTimerStorage(); setNota('')
+      setError('No se pudo guardar la sesión ahora. Quedó en este dispositivo y se enviará sola cuando haya conexión.')
+      return
+    }
+    try {
       if (currentMode === 'work') {
         setPuntos(data.puntos_totales)
         puntosRef.current = data.puntos_totales
@@ -270,10 +294,34 @@ export default function Timer({
         setShowBreakOffer(true)
       }
     } catch (err) {
+      // La sesión ya quedó guardada; solo falló algo de la pantalla (sonido, aviso…).
       console.error(err)
-      setError('No se pudo guardar la sesión, así que los puntos no se sumaron. Revise su conexión.')
     }
   }, [userId, setPuntos, categoria, nota, autoMode, breakDuration, workDuration, onSesionGuardada])
+
+  // Reintenta lo que quedó en cola: al abrir, al volver la conexión y cada minuto.
+  const vaciandoCola = useRef(false)
+  const vaciarCola = useCallback(async () => {
+    if (vaciandoCola.current) return
+    vaciandoCola.current = true
+    try {
+      let cola = leerCola()
+      while (cola.length) {
+        const { data, error: e } = await supabase.rpc('registrar_sesion', cola[0])
+        if (e || !data?.exito) break
+        cola = cola.slice(1); guardarCola(cola); setEnCola(cola.length)
+        if (data.puntos_totales != null) { setPuntos(data.puntos_totales); puntosRef.current = data.puntos_totales }
+        onSesionGuardada?.(data)
+      }
+      if (!cola.length) { setError(m => (m && m.includes('en este dispositivo') ? null : m)); loadTodayStats() }
+    } finally { vaciandoCola.current = false }
+  }, [setPuntos, onSesionGuardada])
+  useEffect(() => {
+    vaciarCola()
+    const iv = setInterval(vaciarCola, 60000)
+    window.addEventListener('online', vaciarCola)
+    return () => { clearInterval(iv); window.removeEventListener('online', vaciarCola) }
+  }, [vaciarCola])
 
   useEffect(() => {
     if (!isRunning) return
@@ -364,7 +412,11 @@ export default function Timer({
 
   const handleStart  = () => { if (!isComplete) { setShowBreakOffer(false); localStorage.removeItem('pomodoro_paused_seconds'); setIsRunning(true) } }
   const handlePause  = () => { setIsRunning(false); clearInterval(intervalRef.current); localStorage.setItem('pomodoro_paused_seconds', secondsLeft.toString()); localStorage.setItem('pomodoro_mode', mode); localStorage.setItem('pomodoro_work_duration', workDuration.toString()); localStorage.setItem('pomodoro_break_duration', breakDuration.toString()); localStorage.setItem('pomodoro_categoria', categoria); localStorage.removeItem('pomodoro_end_time') }
-  const handleModeChange = (newMode) => { setMode(newMode); resetTimer(newMode) }
+  const hayProgreso = isRunning || (!isComplete && secondsLeft < totalSeconds)
+  const confirmarPerder = () => !hayProgreso || window.confirm('Hay un temporizador en marcha. ¿Cancelarlo y perder este avance?')
+  const handleModeChange = (newMode) => { if (newMode === mode || !confirmarPerder()) return; setMode(newMode); resetTimer(newMode) }
+  const cancelar = () => { if (confirmarPerder()) resetTimer() }
+  const contarPerdida = () => { const p = perdida; setPerdida(null); if (p) completeSession('work', p.minutos) }
   const handleWorkDurationChange  = (m) => { if (isRunning) return; setWorkDuration(m);  if (mode === 'work')  { setSecondsLeft(m * 60); setIsComplete(false) } }
   const handleBreakDurationChange = (m) => { if (isRunning) return; setBreakDuration(m); if (mode === 'break') { setSecondsLeft(m * 60); setIsComplete(false) } }
   // ── Cronómetro: cuenta hacia arriba hasta pulsar Terminar (máx. CRONO_MAX_MIN) ──
@@ -418,6 +470,17 @@ export default function Timer({
   return (
     <div className="timer-container">
       {error && <div className="error-message">{error}<button className="btn-ghost small" onClick={() => setError(null)}>✕</button></div>}
+
+      {perdida && (
+        <div className="foco-pregunta">
+          <p>⏱️ Su pomodoro de {perdida.minutos} min terminó mientras la app estaba cerrada. ¿Lo cuenta?</p>
+          <div className="foco-pregunta-acciones">
+            <button className="foco-si" onClick={contarPerdida}>✅ Sí, contarlo</button>
+            <button className="btn-ghost" onClick={() => setPerdida(null)}>Descartar</button>
+          </div>
+        </div>
+      )}
+      {enCola > 0 && <div className="next-prize-banner all-unlocked">⏳ {enCola} sesión{enCola > 1 ? 'es' : ''} pendiente{enCola > 1 ? 's' : ''} de enviar; se reintenta sola.</div>}
 
       <div className="timer-top-row">
         <StreakBadge streak={streak} />
@@ -613,7 +676,7 @@ export default function Timer({
           {isRunning && <button className="btn-secondary large" onClick={handlePause}>Pausar</button>}
           {isComplete && <button className="btn-primary large" onClick={() => resetTimer()}>Nueva sesión</button>}
           {(isRunning || (!isComplete && secondsLeft < totalSeconds)) && (
-            <button className="btn-ghost" onClick={() => resetTimer()}>Cancelar</button>
+            <button className="btn-ghost" onClick={cancelar}>Cancelar</button>
           )}
         </div>
       )}

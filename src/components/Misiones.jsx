@@ -209,22 +209,41 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
     setActualId(null); setMenu(null)
   }
 
-  const completar = useCallback(async (t) => {
-    if (!t || enCurso.current.has(t.id)) return
+  // Completar tiene 5 s para deshacer: Todoist y los puntos (que no se pueden revertir)
+  // solo se tocan cuando pasa ese plazo.
+  const pendientesDeshacer = useRef(new Map())   // id -> { to, t }
+  const [deshacer, setDeshacer] = useState(null) // { id, texto }
+  const completar = useCallback((t) => {
+    if (!t || enCurso.current.has(t.id) || pendientesDeshacer.current.has(t.id)) return
     const estimado = puntosDe(t, hoy, zombiDe(t), juego?.reglas)
     quitar(t)
     sonar('hecho')
     setFlotante(`+${estimado}`); setTimeout(() => setFlotante(null), 1200)
-    mostrarAviso(ANIMOS[Math.floor(Math.random() * ANIMOS.length)])
-    const r = await ejecutar(t, 'complete', { esperado: t.due?.date || null })
-    if (!r) return
-    if (r.ok === false && r.motivo === 'ya_completada') { mostrarAviso('Esa ya estaba completada en Todoist.'); return }
-    if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
-    if (r.error_puntos) setError('Se completó en Todoist, pero no se pudieron sumar los puntos: ' + r.error_puntos)
-    celebrarResultado?.(r)
-    refrescarJuego?.()
-    if (jefe && t.proyecto_id === jefe.proyecto_id) cargarJefe()
+    const enviar = async () => {
+      pendientesDeshacer.current.delete(t.id)
+      setDeshacer(d => (d?.id === t.id ? null : d))
+      const r = await ejecutar(t, 'complete', { esperado: t.due?.date || null })
+      if (!r) return
+      if (r.ok === false && r.motivo === 'ya_completada') { mostrarAviso('Esa ya estaba completada en Todoist.'); return }
+      if (typeof r.puntos_totales === 'number') setPuntos(r.puntos_totales)
+      if (r.error_puntos) setError('Se completó en Todoist, pero no se pudieron sumar los puntos: ' + r.error_puntos)
+      celebrarResultado?.(r)
+      refrescarJuego?.()
+      if (jefe && t.proyecto_id === jefe.proyecto_id) cargarJefe()
+    }
+    pendientesDeshacer.current.set(t.id, { to: setTimeout(enviar, 5000), t })
+    setDeshacer({ id: t.id, texto: `${ANIMOS[Math.floor(Math.random() * ANIMOS.length)]} «${t.contenido.slice(0, 40)}»` })
   }, [ejecutar, hoy, mostrarAviso, setPuntos, detalles, celebrarResultado, refrescarJuego, jefe, cargarJefe, juego?.reglas])
+
+  const deshacerCompletar = () => {
+    const d = deshacer
+    const e = d && pendientesDeshacer.current.get(d.id)
+    if (!e) return
+    clearTimeout(e.to); pendientesDeshacer.current.delete(d.id)
+    ocultas.current.delete(d.id)
+    setTareas(prev => prev.some(z => z.id === d.id) ? prev : [...prev, e.t])
+    setActualId(d.id); setDeshacer(null)
+  }
 
   // Posponer: si es zombi (3+ veces) y no tiene pasos, primero hay que partirla o soltarla.
   const abrirPosponer = useCallback(() => {
@@ -523,7 +542,12 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
         </aside>
       </div>
 
-      {aviso && <div className="mis-aviso">{aviso}</div>}
+      {deshacer && (
+        <div className="mis-aviso">{deshacer.texto}{' '}
+          <button className="btn-ghost small" onClick={deshacerCompletar}>↩ Deshacer</button>
+        </div>
+      )}
+      {aviso && !deshacer && <div className="mis-aviso">{aviso}</div>}
     </div>
   )
 }

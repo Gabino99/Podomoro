@@ -52,7 +52,7 @@ export function playBreakComplete() {
     const ctx = getAudioContext()
     if (!ctx) return
 
-    for (let r = 0; r < 10; r++) {
+    for (let r = 0; r < 3; r++) {
       const t = r * 3
       const o = ctx.createOscillator()
       const g = ctx.createGain()
