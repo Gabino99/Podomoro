@@ -19,17 +19,19 @@ export async function llamarTodoist(action, datos = {}) {
   return data
 }
 
-// ── Utilidades de misiones (misma fórmula que el servidor) ──
+// ── Utilidades de misiones ──
 export const diaDe = (t) => (t.due?.date || '').slice(0, 10)
 export const tieneHora = (t) => (t.due?.date || '').length > 10
 export const esJefe = (t, hoy = fechaCR()) => !!diaDe(t) && diaDe(t) < hoy
 
-// zombi: pospuesta 3+ veces; terminarla vale x1.5 (se acumula con jefe). Tope 150, como el servidor.
-export function puntosDe(t, hoy = fechaCR(), zombi = false) {
-  const base = { 1: 40, 2: 25, 3: 15, 4: 10 }[t.prioridad] ?? 10
-  const bono = t.duracion ? Math.min(30, Math.round(t.duracion / 5)) : 5
-  const mult = (esJefe(t, hoy) ? 1.5 : 1) * (zombi ? 1.5 : 1)
-  return Math.max(1, Math.min(150, Math.round((base + bono) * mult)))
+// Bono de una misión según las reglas del usuario (las manda estado_juego). Vencida y zombi son
+// totales, no extras; si aplican las dos vale el mayor; nunca menos que la base. Es lo que
+// muestra la pantalla: el servidor calcula y otorga el valor real (el combo y el tope diario
+// pueden cambiarlo). Mientras llegan las reglas se usan los valores iniciales.
+const REGLAS_ESPERA = { mision_base: 5, mision_vencida: 10, mision_zombi: 10 }
+export function puntosDe(t, hoy = fechaCR(), zombi = false, reglas = null) {
+  const r = reglas ?? REGLAS_ESPERA
+  return Math.max(r.mision_base, esJefe(t, hoy) ? r.mision_vencida : 0, zombi ? r.mision_zombi : 0)
 }
 
 export function hora12(hhmm) {

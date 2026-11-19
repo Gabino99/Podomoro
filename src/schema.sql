@@ -53,6 +53,9 @@ ALTER TABLE public.perfiles
 -- Los perfiles que ya existían quedan en FALSE (se les calcula el XP histórico una vez);
 -- los nuevos nacen en TRUE.
 ALTER TABLE public.perfiles ALTER COLUMN gamificacion_v6 SET DEFAULT TRUE;
+-- v7: reglas de puntos (solo lo que el usuario cambió; el resto sale de _reglas_defecto())
+ALTER TABLE public.perfiles
+  ADD COLUMN IF NOT EXISTS reglas JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS public.sesiones (
   id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -157,6 +160,7 @@ DECLARE
   v_uid  UUID := auth.uid();
   v_ins  TEXT[] := '{}';
   v_p    public.perfiles%ROWTYPE;
+  v_gan  INT := 0;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'No autorizado'; END IF;
   IF p_tipo NOT IN ('trabajo','descanso') THEN RAISE EXCEPTION 'Tipo inválido'; END IF;
@@ -173,13 +177,14 @@ BEGIN
           left(p_nota, 500));
 
   IF p_tipo = 'trabajo' THEN
-    PERFORM public._ganar(v_uid, p_duracion, 'sesion', coalesce(left(p_nota, 120), p_categoria), now());
+    v_gan := public._ganar(v_uid, round(p_duracion * public._regla(v_uid, 'min_enfoque'))::int,
+                           'sesion', coalesce(left(p_nota, 120), p_categoria), now());
     PERFORM public._marcar_actividad(v_uid, public._dia_cr(now()));
     v_ins := public._revisar_insignias(v_uid);
   END IF;
 
   SELECT * INTO v_p FROM public.perfiles WHERE user_id = v_uid;
-  RETURN json_build_object('exito', true, 'puntos_totales', v_p.puntos_totales,
+  RETURN json_build_object('exito', true, 'puntos_ganados', v_gan, 'puntos_totales', v_p.puntos_totales,
                            'xp_total', v_p.xp_total, 'insignias', to_json(v_ins));
 END;
 $$;
@@ -346,6 +351,10 @@ GRANT EXECUTE ON FUNCTION public.todoist_cron_secreto() TO service_role;
 --     Cada punto ganado suma igual a los dos.
 --   · Nivel n → n+1 necesita 100 + (n-1)·50 XP.
 --     Rangos: Aprendiz (1), Escudero (3), Caballero (6), Paladín (10), Leyenda (15).
+--   · v7: los números de abajo son los valores INICIALES; cada usuario los cambia con
+--     guardar_reglas() (ver _reglas_defecto). El enfoque da 1 punto por minuto; misión +5
+--     (vencida/zombi +10), combo hasta ×1.5, cofres +5/+20, retos +5/+5/+5/+10, jefe +25,
+--     tope diario de bonos 50. Lo que dicen las líneas siguientes era el esquema v6.
 --   · Combo: otra misión antes de 45 min → ×1, ×1.5, ×2, ×2.5, ×3 (tope).
 --   · Racha: días con al menos una misión o un pomodoro. Los escudos (máx. 3)
 --     tapan días perdidos.
@@ -444,17 +453,106 @@ AS $$ SELECT CASE WHEN p_nivel >= 15 THEN 'Leyenda' WHEN p_nivel >= 10 THEN 'Pal
                   WHEN p_nivel >= 6 THEN 'Caballero' WHEN p_nivel >= 3 THEN 'Escudero'
                   ELSE 'Aprendiz' END $$;
 
--- Suma puntos y XP y lo anota en la bitácora.
-CREATE OR REPLACE FUNCTION public._ganar(p_user UUID, p_puntos INT, p_origen TEXT, p_detalle TEXT, p_momento TIMESTAMPTZ DEFAULT NOW())
-RETURNS VOID LANGUAGE plpgsql SET search_path = public
+-- ── v7: reglas de puntos configurables ──
+-- El minuto de enfoque es la moneda base; lo demás son bonos chicos con tope diario.
+-- "vencida" y "zombi" son totales (no se suman a la base). tope_bonos = 0 → sin tope.
+CREATE OR REPLACE FUNCTION public._reglas_defecto()
+RETURNS JSONB LANGUAGE sql IMMUTABLE
+AS $$ SELECT '{"min_enfoque": 1, "mision_base": 5, "mision_vencida": 10, "mision_zombi": 10,
+               "combo_max": 1.5, "cofre_mas": 5, "cofre_legendario": 20,
+               "reto_misiones_3": 5, "reto_jefe_1": 5, "reto_enfoque_25": 5, "reto_misiones_6": 10,
+               "jefe_proyecto": 25, "tope_bonos": 50}'::jsonb $$;
+
+CREATE OR REPLACE FUNCTION public._reglas_rangos()
+RETURNS JSONB LANGUAGE sql IMMUTABLE
+AS $$ SELECT '{"min_enfoque": [0.5, 5], "mision_base": [0, 50], "mision_vencida": [0, 100], "mision_zombi": [0, 100],
+               "combo_max": [1, 3], "cofre_mas": [0, 50], "cofre_legendario": [0, 200],
+               "reto_misiones_3": [0, 100], "reto_jefe_1": [0, 100], "reto_enfoque_25": [0, 100], "reto_misiones_6": [0, 100],
+               "jefe_proyecto": [0, 500], "tope_bonos": [0, 1000]}'::jsonb $$;
+
+-- Defectos + lo guardado (solo claves conocidas con valor numérico).
+CREATE OR REPLACE FUNCTION public._reglas(p_user UUID)
+RETURNS JSONB LANGUAGE sql STABLE SET search_path = public
 AS $$
+  SELECT public._reglas_defecto() || coalesce((
+    SELECT jsonb_object_agg(e.k, e.v)
+      FROM public.perfiles p, jsonb_each(p.reglas) AS e(k, v)
+     WHERE p.user_id = p_user AND public._reglas_defecto() ? e.k AND jsonb_typeof(e.v) = 'number'
+  ), '{}'::jsonb)
+$$;
+
+CREATE OR REPLACE FUNCTION public._regla(p_user UUID, p_clave TEXT)
+RETURNS NUMERIC LANGUAGE sql STABLE SET search_path = public
+AS $$ SELECT (public._reglas(p_user) ->> p_clave)::numeric $$;
+
+CREATE OR REPLACE FUNCTION public.reglas_juego()
+RETURNS JSON LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_uid UUID := auth.uid();
 BEGIN
-  IF coalesce(p_puntos, 0) <= 0 THEN RETURN; END IF;
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'No autorizado'; END IF;
+  RETURN json_build_object('valores', public._reglas(v_uid),
+                           'defectos', public._reglas_defecto(),
+                           'rangos',   public._reglas_rangos());
+END;
+$$;
+
+-- Reemplaza las reglas guardadas por las enviadas (validadas). '{}' = valores recomendados.
+CREATE OR REPLACE FUNCTION public.guardar_reglas(p_reglas JSONB)
+RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_uid UUID := auth.uid();
+  v_rangos JSONB := public._reglas_rangos();
+  v_nuevo JSONB := '{}'::jsonb;
+  k TEXT; v JSONB; n NUMERIC;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'No autorizado'; END IF;
+  IF p_reglas IS NULL OR jsonb_typeof(p_reglas) <> 'object' THEN RAISE EXCEPTION 'Reglas inválidas'; END IF;
+  FOR k, v IN SELECT * FROM jsonb_each(p_reglas) LOOP
+    IF NOT (v_rangos ? k) THEN CONTINUE; END IF;                 -- clave desconocida: se ignora
+    IF jsonb_typeof(v) <> 'number' THEN RAISE EXCEPTION 'Valor fuera de rango: %', k; END IF;
+    n := (v #>> '{}')::numeric;
+    IF n < (v_rangos -> k ->> 0)::numeric OR n > (v_rangos -> k ->> 1)::numeric THEN
+      RAISE EXCEPTION 'Valor fuera de rango: %', k;
+    END IF;
+    v_nuevo := v_nuevo || jsonb_build_object(k, n);
+  END LOOP;
+  INSERT INTO public.perfiles (user_id) VALUES (v_uid) ON CONFLICT (user_id) DO NOTHING;
+  UPDATE public.perfiles SET reglas = v_nuevo WHERE user_id = v_uid;
+  RETURN json_build_object('exito', true, 'valores', public._reglas(v_uid));
+END;
+$$;
+
+-- Suma puntos y XP y lo anota en la bitácora. Devuelve lo realmente otorgado:
+-- todo lo que no sea enfoque ('sesion') respeta el tope diario de bonos (regla tope_bonos,
+-- día de Costa Rica del momento; 0 = sin tope).
+DROP FUNCTION IF EXISTS public._ganar(UUID, INT, TEXT, TEXT, TIMESTAMPTZ);
+CREATE OR REPLACE FUNCTION public._ganar(p_user UUID, p_puntos INT, p_origen TEXT, p_detalle TEXT, p_momento TIMESTAMPTZ DEFAULT NOW())
+RETURNS INT LANGUAGE plpgsql SET search_path = public
+AS $$
+DECLARE
+  v_pts  INT := coalesce(p_puntos, 0);
+  v_mom  TIMESTAMPTZ := coalesce(p_momento, NOW());
+  v_tope INT;
+  v_ya   INT;
+BEGIN
+  IF v_pts <= 0 THEN RETURN 0; END IF;
+  IF p_origen <> 'sesion' THEN
+    v_tope := public._regla(p_user, 'tope_bonos')::int;
+    IF v_tope > 0 THEN
+      SELECT coalesce(sum(puntos), 0) INTO v_ya FROM public.xp_eventos
+       WHERE user_id = p_user AND origen <> 'sesion' AND public._dia_cr(momento) = public._dia_cr(v_mom);
+      v_pts := least(v_pts, greatest(0, v_tope - v_ya));
+      IF v_pts <= 0 THEN RETURN 0; END IF;
+    END IF;
+  END IF;
   UPDATE public.perfiles
-     SET puntos_totales = puntos_totales + p_puntos, xp_total = xp_total + p_puntos
+     SET puntos_totales = puntos_totales + v_pts, xp_total = xp_total + v_pts
    WHERE user_id = p_user;
   INSERT INTO public.xp_eventos (user_id, origen, puntos, detalle, momento)
-  VALUES (p_user, p_origen, p_puntos, left(p_detalle, 200), coalesce(p_momento, NOW()));
+  VALUES (p_user, p_origen, v_pts, left(p_detalle, 200), v_mom);
+  RETURN v_pts;
 END;
 $$;
 
@@ -518,14 +616,16 @@ BEGIN
   IF p.racha_max >= 7  THEN cand := cand || 'racha_7'::text; END IF;
   IF p.racha_max >= 30 THEN cand := cand || 'racha_30'::text; END IF;
   IF v_jef >= 10 THEN cand := cand || 'jefes_10'::text; END IF;
-  IF p.combo_max >= 3 THEN cand := cand || 'combo_x3'::text; END IF;
+  IF p.combo_max >= public._regla(p_user, 'combo_max') AND public._regla(p_user, 'combo_max') > 1 THEN
+    cand := cand || 'combo_x3'::text;   -- "Combo máximo": el tope que tenga configurado
+  END IF;
   IF v_enf >= 300 THEN cand := cand || 'enfoque_300'::text; END IF;
   IF (SELECT count(*) FROM public.dias_vaciados WHERE user_id = p_user) >= 5 THEN cand := cand || 'vaciados_5'::text; END IF;
   IF v_zom >= 1 THEN cand := cand || 'cazazombis'::text; END IF;
   IF EXISTS (SELECT 1 FROM public.jefes_proyecto WHERE user_id = p_user AND derrotado_en IS NOT NULL) THEN cand := cand || 'matadragones'::text; END IF;
   IF v_mad THEN cand := cand || 'madrugador'::text; END IF;
   IF EXISTS (SELECT 1 FROM public.retos_cobrados WHERE user_id = p_user GROUP BY dia HAVING count(*) >= 4) THEN cand := cand || 'dia_perfecto'::text; END IF;
-  IF EXISTS (SELECT 1 FROM public.xp_eventos WHERE user_id = p_user AND origen = 'cofre' AND detalle = 'legendario') THEN cand := cand || 'suertudo'::text; END IF;
+  IF EXISTS (SELECT 1 FROM public.misiones WHERE user_id = p_user AND cofre = 'legendario') THEN cand := cand || 'suertudo'::text; END IF;
   IF v_hip >= 10 THEN cand := cand || 'hiperfoco_10'::text; END IF;
   IF public._nivel(p.xp_total) >= 10 THEN cand := cand || 'nivel_10'::text; END IF;
 
@@ -536,13 +636,16 @@ BEGIN
 END;
 $$;
 
--- Retos del día: (id, nombre, meta, premio)
-CREATE OR REPLACE FUNCTION public._retos()
-RETURNS TABLE (id TEXT, nombre TEXT, meta INT, premio INT) LANGUAGE sql IMMUTABLE
-AS $$ VALUES ('misiones_3', 'Complete 3 misiones', 3, 30),
-             ('jefe_1', 'Derrote 1 jefe vencido', 1, 25),
-             ('enfoque_25', 'Haga 25 min de enfoque', 25, 25),
-             ('misiones_6', 'Complete 6 misiones', 6, 50) $$;
+-- Retos del día: (id, nombre, meta, premio). El premio sale de las reglas del usuario.
+DROP FUNCTION IF EXISTS public._retos();
+CREATE OR REPLACE FUNCTION public._retos(p_user UUID)
+RETURNS TABLE (id TEXT, nombre TEXT, meta INT, premio INT) LANGUAGE sql STABLE SET search_path = public
+AS $$ SELECT * FROM (VALUES
+        ('misiones_3'::text, 'Complete 3 misiones'::text, 3, public._regla(p_user, 'reto_misiones_3')::int),
+        ('jefe_1',          'Derrote 1 jefe vencido',     1, public._regla(p_user, 'reto_jefe_1')::int),
+        ('enfoque_25',      'Haga 25 min de enfoque',    25, public._regla(p_user, 'reto_enfoque_25')::int),
+        ('misiones_6',      'Complete 6 misiones',        6, public._regla(p_user, 'reto_misiones_6')::int)
+      ) AS t(id, nombre, meta, premio) $$;
 
 CREATE OR REPLACE FUNCTION public._progreso_reto(p_user UUID, p_reto TEXT, p_dia DATE)
 RETURNS INT LANGUAGE plpgsql STABLE SET search_path = public
@@ -569,7 +672,7 @@ CREATE OR REPLACE FUNCTION public.registrar_mision(
   p_proyecto    TEXT,
   p_prioridad   INT,
   p_vencida     BOOLEAN,
-  p_puntos      INT,                      -- puntos base (fórmula de la misión)
+  p_puntos      INT DEFAULT NULL,         -- obsoleto: se ignora; el bono sale de las reglas del usuario
   p_origen      TEXT DEFAULT 'app',
   p_momento     TIMESTAMPTZ DEFAULT NULL, -- cuándo se completó (sync: hora real en Todoist)
   p_zombi       BOOLEAN DEFAULT FALSE,
@@ -589,6 +692,8 @@ DECLARE
   v_mult    NUMERIC(3,1) := 1;
   v_doble   BOOLEAN := FALSE;
   v_final   INT;
+  v_base    INT;
+  v_gan     INT;
   v_r       FLOAT8;
   v_cofre   TEXT;
   v_cofre_p INT := 0;
@@ -597,9 +702,6 @@ BEGIN
   IF p_user_id IS NULL OR p_task_id IS NULL OR p_ocurrencia IS NULL THEN
     RAISE EXCEPTION 'Datos incompletos';
   END IF;
-  IF p_puntos IS NULL OR p_puntos < 1 OR p_puntos > 150 THEN
-    RAISE EXCEPTION 'Puntos inválidos';
-  END IF;
   IF coalesce(p_origen, 'app') NOT IN ('app', 'todoist') THEN
     RAISE EXCEPTION 'Origen inválido';
   END IF;
@@ -607,12 +709,20 @@ BEGIN
   INSERT INTO public.perfiles (user_id) VALUES (p_user_id) ON CONFLICT (user_id) DO NOTHING;
   SELECT * INTO p FROM public.perfiles WHERE user_id = p_user_id FOR UPDATE;
 
+  -- Bono base de la misión (reglas del usuario). Vencida y zombi son totales, no extras;
+  -- si aplican las dos, vale el mayor; nunca menos que la base.
+  v_base := greatest(
+    public._regla(p_user_id, 'mision_base'),
+    CASE WHEN coalesce(p_vencida, FALSE) THEN public._regla(p_user_id, 'mision_vencida') ELSE 0 END,
+    CASE WHEN coalesce(p_zombi, FALSE)   THEN public._regla(p_user_id, 'mision_zombi')   ELSE 0 END
+  )::int;
+
   INSERT INTO public.misiones (user_id, task_id, ocurrencia, contenido, proyecto, prioridad, vencida, puntos,
                                origen, momento, zombi, etiquetas, proyecto_id, puntos_base)
   VALUES (p_user_id, p_task_id, left(p_ocurrencia, 40), left(coalesce(p_contenido, 'Tarea'), 300),
-          left(p_proyecto, 120), coalesce(p_prioridad, 4), coalesce(p_vencida, FALSE), p_puntos,
+          left(p_proyecto, 120), coalesce(p_prioridad, 4), coalesce(p_vencida, FALSE), v_base,
           coalesce(p_origen, 'app'), v_mom, coalesce(p_zombi, FALSE), coalesce(p_etiquetas, '{}'),
-          left(p_proyecto_id, 60), p_puntos)
+          left(p_proyecto_id, 60), v_base)
   ON CONFLICT (user_id, task_id, ocurrencia) DO NOTHING;
   GET DIAGNOSTICS v_filas = ROW_COUNT;
   IF v_filas = 0 THEN
@@ -627,9 +737,9 @@ BEGIN
   ELSE
     v_n := 0;
   END IF;
-  v_mult := least(3, 1 + 0.5 * greatest(v_n, 0));
+  v_mult := least(public._regla(p_user_id, 'combo_max'), 1 + 0.5 * greatest(v_n, 0));
   IF p.dobles > 0 THEN v_doble := TRUE; END IF;
-  v_final := round(p_puntos * v_mult * (CASE WHEN v_doble THEN 2 ELSE 1 END));
+  v_final := round(v_base * v_mult * (CASE WHEN v_doble THEN 2 ELSE 1 END));
 
   -- Cofre (32 %)
   v_r := random();
@@ -643,20 +753,20 @@ BEGIN
          combo_max = greatest(combo_max, v_mult),
          dobles    = dobles - (CASE WHEN v_doble THEN 1 ELSE 0 END)
    WHERE user_id = p_user_id;
-  UPDATE public.misiones SET puntos = v_final, combo = v_mult, cofre = v_cofre
+  -- Lo otorgado puede ser menor que v_final si el tope diario de bonos lo recorta.
+  v_gan := public._ganar(p_user_id, v_final, 'mision', p_contenido, v_mom);
+  UPDATE public.misiones SET puntos = v_gan, combo = v_mult, cofre = v_cofre
    WHERE user_id = p_user_id AND task_id = p_task_id AND ocurrencia = left(p_ocurrencia, 40);
 
-  PERFORM public._ganar(p_user_id, v_final, 'mision', p_contenido, v_mom);
-
   IF v_cofre = 'legendario' THEN
-    v_cofre_p := 100; PERFORM public._ganar(p_user_id, 100, 'cofre', 'legendario', v_mom);
+    v_cofre_p := public._ganar(p_user_id, public._regla(p_user_id, 'cofre_legendario')::int, 'cofre', 'legendario', v_mom);
   ELSIF v_cofre = 'mas25' THEN
-    v_cofre_p := 25;  PERFORM public._ganar(p_user_id, 25, 'cofre', 'mas25', v_mom);
+    v_cofre_p := public._ganar(p_user_id, public._regla(p_user_id, 'cofre_mas')::int, 'cofre', 'mas25', v_mom);
   ELSIF v_cofre = 'doble' THEN
     UPDATE public.perfiles SET dobles = dobles + 1 WHERE user_id = p_user_id;
   ELSIF v_cofre = 'escudo' THEN
     IF p.escudos >= 3 THEN   -- ya tiene 3: se cambia por puntos
-      v_cofre_p := 25; PERFORM public._ganar(p_user_id, 25, 'cofre', 'escudo_lleno', v_mom);
+      v_cofre_p := public._ganar(p_user_id, public._regla(p_user_id, 'cofre_mas')::int, 'cofre', 'escudo_lleno', v_mom);
     ELSE
       UPDATE public.perfiles SET escudos = least(3, escudos + 1) WHERE user_id = p_user_id;
     END IF;
@@ -671,9 +781,9 @@ BEGIN
   SELECT * INTO p FROM public.perfiles WHERE user_id = p_user_id;
   RETURN json_build_object(
     'exito', true, 'nueva', true,
-    'puntos_base', p_puntos, 'combo', v_mult, 'doble', v_doble,
-    'puntos_mision', v_final, 'cofre', v_cofre, 'cofre_puntos', v_cofre_p,
-    'puntos_ganados', v_final + v_cofre_p,
+    'puntos_base', v_base, 'combo', v_mult, 'doble', v_doble,
+    'puntos_mision', v_gan, 'cofre', v_cofre, 'cofre_puntos', v_cofre_p,
+    'puntos_ganados', v_gan + v_cofre_p,
     'puntos_totales', p.puntos_totales, 'xp_total', p.xp_total,
     'nivel', public._nivel(p.xp_total), 'racha', p.racha, 'insignias', to_json(v_ins));
 END;
@@ -688,10 +798,10 @@ AS $$
 DECLARE
   v_uid UUID := auth.uid();
   v_dia DATE := public._dia_cr(NOW());
-  r RECORD; v_prog INT; v_filas INT; v_ins TEXT[]; v_pts INT;
+  r RECORD; v_prog INT; v_filas INT; v_ins TEXT[]; v_pts INT; v_gan INT;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'No autorizado'; END IF;
-  SELECT * INTO r FROM public._retos() t WHERE t.id = p_reto;
+  SELECT * INTO r FROM public._retos(v_uid) t WHERE t.id = p_reto;
   IF NOT FOUND THEN RAISE EXCEPTION 'Reto desconocido'; END IF;
   v_prog := public._progreso_reto(v_uid, p_reto, v_dia);
   IF v_prog < r.meta THEN
@@ -701,10 +811,10 @@ BEGIN
   INSERT INTO public.retos_cobrados (user_id, dia, reto) VALUES (v_uid, v_dia, p_reto) ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_filas = ROW_COUNT;
   IF v_filas = 0 THEN RETURN json_build_object('exito', false, 'mensaje', 'Ya lo cobró hoy'); END IF;
-  PERFORM public._ganar(v_uid, r.premio, 'reto', r.nombre, NOW());
+  v_gan := public._ganar(v_uid, r.premio, 'reto', r.nombre, NOW());
   v_ins := public._revisar_insignias(v_uid);
   SELECT puntos_totales INTO v_pts FROM public.perfiles WHERE user_id = v_uid;
-  RETURN json_build_object('exito', true, 'premio', r.premio, 'puntos_totales', v_pts, 'insignias', to_json(v_ins));
+  RETURN json_build_object('exito', true, 'premio', v_gan, 'puntos_totales', v_pts, 'insignias', to_json(v_ins));
 END;
 $$;
 
@@ -744,18 +854,21 @@ BEGIN
     v_racha := CASE WHEN v_hueco <= 0 OR v_hueco <= p.escudos THEN p.racha ELSE 0 END;
   END IF;
   IF p.combo_en IS NOT NULL AND NOW() - p.combo_en <= INTERVAL '45 minutes' THEN
-    v_combo := least(3, 1 + 0.5 * p.combo_n);
+    v_combo := least(public._regla(v_uid, 'combo_max'), 1 + 0.5 * p.combo_n);
     v_vence := p.combo_en + INTERVAL '45 minutes';
   END IF;
 
   RETURN json_build_object(
     'exito', true,
     'xp_total', p.xp_total, 'puntos', p.puntos_totales,
+    'reglas', public._reglas(v_uid),
+    'bonos_hoy', (SELECT coalesce(sum(puntos), 0) FROM public.xp_eventos
+                   WHERE user_id = v_uid AND origen <> 'sesion' AND public._dia_cr(momento) = v_hoy),
     'nivel', v_nivel, 'rango', public._rango(v_nivel),
     'xp_nivel', p.xp_total - public._xp_para_nivel(v_nivel),
     'xp_siguiente', 100 + (v_nivel - 1) * 50,
     'racha', v_racha, 'racha_max', p.racha_max, 'escudos', p.escudos,
-    'combo', v_combo, 'combo_siguiente', CASE WHEN v_vence IS NULL THEN 1 ELSE least(3, v_combo + 0.5) END,
+    'combo', v_combo, 'combo_siguiente', CASE WHEN v_vence IS NULL THEN 1 ELSE least(public._regla(v_uid, 'combo_max'), v_combo + 0.5) END,
     'combo_vence', v_vence, 'dobles', p.dobles,
     'energia', CASE WHEN p.energia_dia = v_hoy THEN p.energia END,
     'hoy', (SELECT count(*) FROM public.misiones WHERE user_id = v_uid AND public._dia_cr(momento) = v_hoy),
@@ -763,7 +876,7 @@ BEGIN
                 'id', t.id, 'nombre', t.nombre, 'meta', t.meta, 'premio', t.premio,
                 'progreso', least(t.meta, public._progreso_reto(v_uid, t.id, v_hoy)),
                 'cobrado', EXISTS (SELECT 1 FROM public.retos_cobrados c WHERE c.user_id = v_uid AND c.dia = v_hoy AND c.reto = t.id)))
-              FROM public._retos() t),
+              FROM public._retos(v_uid) t),
     'insignias', (SELECT coalesce(json_agg(json_build_object('id', insignia, 'fecha', obtenida_en) ORDER BY obtenida_en), '[]'::json)
                     FROM public.insignias WHERE user_id = v_uid),
     'jefe', (SELECT json_build_object('proyecto_id', proyecto_id, 'nombre', nombre, 'hp_max', hp_max)
@@ -814,7 +927,7 @@ AS $$ UPDATE public.jefes_proyecto SET hp_max = greatest(hp_max, coalesce(p_hp, 
 CREATE OR REPLACE FUNCTION public.derrotar_jefe(p_user UUID)
 RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
-DECLARE j public.jefes_proyecto%ROWTYPE; v_ins TEXT[]; v_pts INT;
+DECLARE j public.jefes_proyecto%ROWTYPE; v_ins TEXT[]; v_pts INT; v_gan INT;
 BEGIN
   SELECT * INTO j FROM public.jefes_proyecto WHERE user_id = p_user AND derrotado_en IS NULL FOR UPDATE;
   IF NOT FOUND THEN RETURN json_build_object('exito', false, 'motivo', 'sin_jefe'); END IF;
@@ -822,10 +935,10 @@ BEGIN
     RETURN json_build_object('exito', false, 'motivo', 'sin_misiones');
   END IF;
   UPDATE public.jefes_proyecto SET derrotado_en = NOW() WHERE id = j.id;
-  PERFORM public._ganar(p_user, 200, 'jefe', j.nombre, NOW());
+  v_gan := public._ganar(p_user, public._regla(p_user, 'jefe_proyecto')::int, 'jefe', j.nombre, NOW());
   v_ins := public._revisar_insignias(p_user);
   SELECT puntos_totales INTO v_pts FROM public.perfiles WHERE user_id = p_user;
-  RETURN json_build_object('exito', true, 'premio', 200, 'nombre', j.nombre, 'puntos_totales', v_pts, 'insignias', to_json(v_ins));
+  RETURN json_build_object('exito', true, 'premio', v_gan, 'nombre', j.nombre, 'puntos_totales', v_pts, 'insignias', to_json(v_ins));
 END;
 $$;
 
@@ -901,6 +1014,16 @@ GRANT EXECUTE ON FUNCTION public.cobrar_reto(TEXT)        TO authenticated;
 GRANT EXECUTE ON FUNCTION public.registrar_energia(TEXT)  TO authenticated;
 GRANT EXECUTE ON FUNCTION public.estado_juego()           TO authenticated;
 GRANT EXECUTE ON FUNCTION public.estadisticas_juego(INT)  TO authenticated;
+
+-- v7: reglas de puntos
+REVOKE ALL ON FUNCTION public._reglas_defecto()            FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public._reglas_rangos()             FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public._reglas(UUID)                FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public._regla(UUID, TEXT)           FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.reglas_juego()               FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.guardar_reglas(JSONB)        FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.reglas_juego()            TO authenticated;
+GRANT EXECUTE ON FUNCTION public.guardar_reglas(JSONB)     TO authenticated;
 
 -- ═══════════════════════════════════════════════════════
 --  v7 — Música de enfoque (Spotify)

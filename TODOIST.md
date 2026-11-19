@@ -6,15 +6,12 @@ en el mismo saldo que usa para canjear recompensas.
 
 ## Cómo suma puntos
 
-| Prioridad | Base |
-|-----------|------|
-| P1 | 40 |
-| P2 | 25 |
-| P3 | 15 |
-| P4 | 10 |
+El minuto concentrado es la moneda base: **1 minuto de pomodoro = 1 punto**. Completar una
+misión da un bono chico fijo, sin importar la prioridad ni la duración:
 
-- Bono por duración: +1 por cada 5 minutos de duración (máximo +30). Sin duración: +5.
-- 👹 **Jefe** (tarea vencida de días anteriores): todo x1.5.
+- Misión normal: **+5**.
+- 👹 **Jefe** (tarea vencida de días anteriores) o 🧟 **zombi**: **+10** en total. Si es las dos cosas, vale +10 (el mayor, no la suma).
+- **Todos estos números se configuran** en Recompensas → ⚙️ Reglas de puntos. Los cambios aplican solo a lo que gane de ahí en adelante.
 - Los puntos los calcula el servidor. Una misma tarea, en una misma fecha, nunca suma dos veces
   (en un hábito repetitivo cada día cuenta aparte).
 
@@ -92,7 +89,7 @@ SELECT origen, contenido, puntos, created_at FROM public.misiones ORDER BY creat
   (si ya existe, se actualiza; no se duplica). Ctrl+Enter también guarda.
 - **🧟 Zombi:** tarea normal con 3 o más comentarios "🔁 Reprogramada". No se puede posponer
   otra vez hasta que se parta en pasos o se suelte. Si se termina con el botón Hecho o con el
-  Modo enfoque, vale ×1.5 (se acumula con jefe: ×2.25). Los hábitos nunca son zombis.
+  Modo enfoque, vale +10 (ver "Cómo suma puntos"). Los hábitos nunca son zombis.
   Nota: el bono zombi no aplica a lo completado fuera de la app.
 - **🧩 Partir en pasos:** un paso por línea; se crean como subtareas para hoy con la misma prioridad.
 - **🗑️ Soltar:** P4, etiqueta 🗑️_Superflua y fecha a +30 días, con comentario para el coach.
@@ -108,20 +105,24 @@ Todo lo calcula el servidor (`src/schema.sql`, sección v6); el navegador nunca 
   Paladín (10), Leyenda (15). Al instalar v6 se sumó el XP de todo el historial; el 2026-11-18
   Gabriel eligió empezar en nivel 1, así que su XP se puso en 0 (`update perfiles set xp_total = 0`).
   Los puntos, la racha, las insignias y las estadísticas (bitácora `xp_eventos`) no cambiaron.
-- **Combo:** otra misión antes de 45 min → ×1, ×1.5, ×2, ×2.5, ×3. Arriba se ve la cuenta regresiva.
+- **Combo:** otra misión antes de 45 min sube el multiplicador del bono de la misión (×1, ×1.5, ×2, …)
+  hasta el máximo configurado (×1.5 por defecto). Arriba se ve la cuenta regresiva.
 - **Racha:** días con al menos una misión o un pomodoro. Los escudos (máx. 3) tapan días perdidos.
-- **Cofres (32 % por misión):** legendario 4 % (+100), XP doble 8 % (la siguiente misión ×2),
-  +25 8 %, escudo 6 % (si ya tiene 3, +25), carga de combo 6 %.
-- **Retos de hoy:** 3 misiones +30 · 1 jefe vencido +25 · 25 min de enfoque +25 · 6 misiones +50.
+- **Cofres (32 % por misión):** legendario 4 % (+20), XP doble 8 % (el bono de la siguiente misión ×2),
+  puntos 8 % (+5), escudo 6 % (si ya tiene 3, +5), carga de combo 6 %.
+- **Retos de hoy:** 3 misiones +5 · 1 jefe vencido +5 · 25 min de enfoque +5 · 6 misiones +10.
   Se cobran con el botón "¡Cobrar!"; el servidor revisa que se cumplieron.
+- **Tope diario de bonos:** 50 puntos al día entre misiones, cofres, retos y jefes (0 = sin tope).
+  Los minutos de enfoque nunca tienen tope. Todo esto se cambia en ⚙️ Reglas de puntos.
 - **Energía:** alta prefiere 🎯_Hiperfoco, 🔬_Acetilcolina y ⭐_Propósito; baja prefiere
   🧠_Baja_Atención, 🟣_Dopamina y tareas de 15 min o menos. Esa misión sale primero (⭐ RECOMENDADA).
 - **Jefe de proyecto:** el proyecto con más tareas pendientes (no repetitivas) es el monstruo.
-  Vaciarlo da +200, pero solo si completó al menos una de sus tareas (borrarlas no cuenta).
+  Vaciarlo da +25, pero solo si completó al menos una de sus tareas (borrarlas no cuenta).
 - **17 insignias** y estadísticas (XP por día, mejores horas, proyectos) en la pestaña Estadísticas.
 - "5 vaciados" = 5 días dejando en cero el tablero de hoy + vencidas.
 
-Instalación: correr `src/schema.sql` (o solo el cambio v5→v6) y volver a desplegar la función `todoist`.
+Instalación (v7, reglas de puntos): correr `src/schema.sql` completo y volver a desplegar la función `todoist`.
+Pruebas del SQL: pegar `supabase/tests/reglas_puntos.sql` en el SQL Editor (se revierte solo).
 
 ## Etapa 5: Google Calendar
 

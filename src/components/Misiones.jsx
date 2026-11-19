@@ -211,7 +211,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
 
   const completar = useCallback(async (t) => {
     if (!t || enCurso.current.has(t.id)) return
-    const estimado = puntosDe(t, hoy, zombiDe(t))
+    const estimado = puntosDe(t, hoy, zombiDe(t), juego?.reglas)
     quitar(t)
     sonar('hecho')
     setFlotante(`+${estimado}`); setTimeout(() => setFlotante(null), 1200)
@@ -224,7 +224,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
     celebrarResultado?.(r)
     refrescarJuego?.()
     if (jefe && t.proyecto_id === jefe.proyecto_id) cargarJefe()
-  }, [ejecutar, hoy, mostrarAviso, setPuntos, detalles, celebrarResultado, refrescarJuego, jefe, cargarJefe])
+  }, [ejecutar, hoy, mostrarAviso, setPuntos, detalles, celebrarResultado, refrescarJuego, jefe, cargarJefe, juego?.reglas])
 
   // Posponer: si es zombi (3+ veces) y no tiene pasos, primero hay que partirla o soltarla.
   const abrirPosponer = useCallback(() => {
@@ -349,7 +349,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
                       <div style={{ width: `${Math.round((jefe.hp / Math.max(1, jefe.hp_max)) * 100)}%` }} />
                       <span>❤️ {jefe.hp} / {jefe.hp_max}</span>
                     </div>
-                    <div className="jefe-pista">Vacíe el proyecto para derrotarlo: +200</div>
+                    <div className="jefe-pista">Vacíe el proyecto para derrotarlo: +{juego?.reglas?.jefe_proyecto ?? 25}</div>
                     {candidatos.length > 1 && <button className="jefe-cambiar" onClick={cambiarJefe}>🔄 Cambiar de jefe</button>}
                   </div>
                 )}
@@ -360,9 +360,9 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
               <div><kbd>C</kbd> completar · <kbd>P</kbd> posponer · <kbd>S</kbd> saltar</div>
               <div><kbd>D</kbd> eliminar · <kbd>F</kbd> modo enfoque</div>
               <div className="lat-glosario">
-                👹 <b>Jefe:</b> vencida de días anteriores, ×1.5.<br />
-                ⚡ <b>Combo:</b> otra misión antes de 45 min sube ×0.5 (hasta ×3).<br />
-                🧟 <b>Zombi:</b> pospuesta 3+ veces; partirla o soltarla. ×1.5.<br />
+                👹 <b>Jefe:</b> vencida de días anteriores, +{juego?.reglas?.mision_vencida ?? 10}.<br />
+                ⚡ <b>Combo:</b> otra misión antes de 45 min sube ×0.5 (hasta ×{juego?.reglas?.combo_max ?? 1.5}).<br />
+                🧟 <b>Zombi:</b> pospuesta 3+ veces; partirla o soltarla. +{juego?.reglas?.mision_zombi ?? 10}.<br />
                 🎁 <b>Cofres:</b> cada misión puede soltar uno (32 %).
               </div>
             </div>
@@ -380,9 +380,9 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
                 {esJefe(actual, hoy) ? <span className="mis-tag jefe">👹 JEFE VENCIDO</span> : <span className="mis-tag">⚔️ MISIÓN</span>}
                 {actual.prioridad < 4 && <span className={`mis-tag p${actual.prioridad}`}>P{actual.prioridad}</span>}
                 {actual.due?.recurrente && <span className="mis-tag">🔁 HÁBITO</span>}
-                {det?.zombi && <span className="mis-tag zombi" title="Pospuesta 3 veces o más: terminarla vale x1.5">🧟 ZOMBI ×{det.reprogramadas}</span>}
+                {det?.zombi && <span className="mis-tag zombi" title="Pospuesta 3 veces o más: terminarla da más puntos">🧟 ZOMBI ×{det.reprogramadas}</span>}
                 {esRecomendada && <span className="mis-tag reco" title={`Va con su energía ${juego.energia}`}>⭐ RECOMENDADA</span>}
-                <span className="mis-tag pts">+{puntosDe(actual, hoy, det?.zombi)} pts</span>
+                <span className="mis-tag pts">+{puntosDe(actual, hoy, det?.zombi, juego?.reglas)} pts</span>
               </div>
               <h2 className="mis-titulo">{actual.contenido}</h2>
               <div className="mis-meta">
@@ -424,7 +424,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
                   <div className="mis-menu-titulo">🧟 Esta tarea ya se pospuso {det?.reprogramadas} veces</div>
                   <div className="mis-menu-aviso">
                     Para moverla otra vez, pártala en pasos más pequeños o suéltela.
-                    Si la termina hoy, vale ×1.5.
+                    Si la termina hoy, vale +{juego?.reglas?.mision_zombi ?? 10}.
                   </div>
                   <div className="mis-menu-fila">
                     <button onClick={() => setMenu('partir')}>🧩 Partir en pasos</button>
@@ -516,7 +516,7 @@ export default function Misiones({ puntos, setPuntos, onEnfocar, juego, refresca
                   <div className="mis-item-nombre">{t.contenido}</div>
                   <div className="mis-item-meta">{esJefe(t, hoy) ? '👹 ' : ''}{cuandoTexto(t, hoy)} · {proyectos[t.proyecto_id] || ''}</div>
                 </div>
-                <div className="mis-item-pts">+{puntosDe(t, hoy, zombiDe(t))}</div>
+                <div className="mis-item-pts">+{puntosDe(t, hoy, zombiDe(t), juego?.reglas)}</div>
               </button>
             ))}
           </div>

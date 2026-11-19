@@ -91,7 +91,7 @@ function VolumeSlider() {
 }
 
 export default function Timer({
-  userId, puntos, setPuntos, recompensas = [], metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
+  userId, puntos, setPuntos, recompensas = [], reglas = null, metaDiaria, onUpdateMeta, onRunningChange, onCompleteChange,
   activo = true,             // la pestaña está a la vista (el Temporizador sigue vivo aunque no lo esté)
   mision = null,             // misión de Todoist amarrada al pomodoro (Modo enfoque)
   inicioFoco = 0,            // sube cada vez que se pide "Modo enfoque" desde Misiones
@@ -233,7 +233,7 @@ export default function Timer({
       else playBreakComplete()
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('¡Sesión completada! ⬡', {
-          body: currentMode === 'work' ? `+${minutosGanados} puntos ganados.` : 'Descanso terminado.',
+          body: currentMode === 'work' ? `+${data.puntos_ganados ?? minutosGanados} puntos ganados.` : 'Descanso terminado.',
         })
       }
       clearTimerStorage(); setNota('')
@@ -328,7 +328,7 @@ export default function Timer({
     try {
       const r = await onTerminarMision?.(m)
       if (r?.ok === false && r?.motivo === 'ya_completada') setAvisoMision('Esa misión ya estaba completada en Todoist.')
-      else setAvisoMision(`✅ «${m.contenido}» completada: +${r?.puntos_ganados ?? 0} pts${r?.zombi ? ' (zombi ×1.5)' : ''}`)
+      else setAvisoMision(`✅ «${m.contenido}» completada: +${r?.puntos_ganados ?? 0} pts${r?.zombi ? ' (zombi)' : ''}`)
       onSoltarMision?.()
       setPreguntaMision(false); setShowBreakOffer(true)
     } catch (e) {
@@ -387,7 +387,7 @@ export default function Timer({
       {mision && (
         <div className="foco-mision">
           <div className="foco-mision-info">
-            <div className="foco-mision-etq">🎯 Misión en foco{mision.zombi ? ' · 🧟 zombi ×1.5' : ''}</div>
+            <div className="foco-mision-etq">🎯 Misión en foco{mision.zombi ? ' · 🧟 zombi' : ''}</div>
             <div className="foco-mision-nombre">{mision.contenido}</div>
             <div className="foco-mision-meta">
               {mision.proyecto || 'Inbox'}{mision.duracion ? ` · ⏱️ ${mision.duracion} min` : ''}
@@ -399,7 +399,7 @@ export default function Timer({
         </div>
       )}
       {!mision && onElegirMision && mode === 'work' && !isRunning && !isComplete && !preguntaMision && (
-        <SelectorMision onElegir={onElegirMision} />
+        <SelectorMision onElegir={onElegirMision} reglas={reglas} />
       )}
       {avisoMision && !mision && (
         <div className="next-prize-banner all-unlocked">{avisoMision}
@@ -473,7 +473,7 @@ export default function Timer({
           ) : (
             <>
               <span className="time-text">{minutes}:{seconds}</span>
-              <span className="time-label">{mode === 'work' ? `+${workDuration} pts` : 'Descanso'}</span>
+              <span className="time-label">{mode === 'work' ? `+${Math.round(workDuration * (reglas?.min_enfoque ?? 1))} pts` : 'Descanso'}</span>
             </>
           )}
         </div>

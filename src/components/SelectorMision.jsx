@@ -4,7 +4,7 @@ import { fechaCR } from '../lib/fechas'
 
 // Elegir en el Temporizador en qué misión de Todoist va a trabajar.
 // Carga la lista solo cuando se abre (hoy + vencidas, el mismo orden que la pestaña Misiones).
-export default function SelectorMision({ onElegir }) {
+export default function SelectorMision({ onElegir, reglas = null }) {
   const [abierto, setAbierto] = useState(false)
   const [tareas, setTareas] = useState(null)
   const [proyectos, setProyectos] = useState({})
@@ -58,7 +58,7 @@ export default function SelectorMision({ onElegir }) {
                 {esJefe(t, hoy) ? '👹 ' : ''}{cuandoTexto(t, hoy)} · {proyectos[t.proyecto_id] || 'Inbox'}{t.duracion ? ` · ⏱️ ${t.duracion} min` : ''}
               </div>
             </div>
-            <div className="selector-item-pts">+{puntosDe(t, hoy)}</div>
+            <div className="selector-item-pts">+{puntosDe(t, hoy, false, reglas)}</div>
           </button>
         ))}
       </div>

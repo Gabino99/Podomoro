@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from './supabase'
-import { COFRES, insignia, rangoDe } from './juego'
+import { textoCofre, insignia, rangoDe } from './juego'
 
 // Estado del juego (nivel, racha, combo, retos, insignias…) desde el servidor,
 // más una cola de avisos para celebrar logros.
@@ -8,6 +8,7 @@ export function useJuego(userId) {
   const [juego, setJuego]   = useState(null)
   const [avisos, setAvisos] = useState([])
   const nivelPrevio = useRef(null)
+  const reglasRef = useRef(null)   // reglas vigentes, para los textos de los cofres
   const seq = useRef(0)
 
   const celebrar = useCallback((texto, tipo = 'info') => {
@@ -25,6 +26,7 @@ export function useJuego(userId) {
       celebrar(`⬆️ ¡Subió a nivel ${data.nivel}! ${r.avatar} ${data.rango}`, 'grande')
     }
     nivelPrevio.current = data.nivel
+    reglasRef.current = data.reglas ?? null
     setJuego(data)
     return data
   }, [userId, celebrar])
@@ -35,7 +37,11 @@ export function useJuego(userId) {
     if (r.combo > 1) celebrar(`⚡ Combo ×${r.combo}${r.doble ? ' · ✨ doble' : ''}: +${r.puntos_mision} pts`, 'combo')
     else if (r.doble) celebrar(`✨ XP doble: +${r.puntos_mision} pts`, 'combo')
     const cofres = r.cofre ? [r.cofre] : (r.cofres ?? [])
-    cofres.forEach(c => COFRES[c] && celebrar(`${COFRES[c].emoji} ${COFRES[c].texto}`, c === 'legendario' ? 'grande' : 'cofre'))
+    cofres.forEach(c => {
+      // Con un solo cofre, los puntos son los que otorgó el servidor (el tope diario puede recortarlos).
+      const t = textoCofre(c, reglasRef.current, r.cofre ? r.cofre_puntos : null)
+      if (t) celebrar(`${t.emoji} ${t.texto}`, c === 'legendario' ? 'grande' : 'cofre')
+    })
     ;(r.insignias ?? []).forEach(id => {
       const i = insignia(id)
       celebrar(`🏅 Nueva insignia: ${i.emoji} ${i.nombre}`, 'grande')

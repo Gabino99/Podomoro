@@ -100,19 +100,10 @@ function normalizar(t: any) {
   };
 }
 
-// Misma fórmula que muestra la pantalla de Misiones.
-// p: 1 = p1 … 4 = p4. dur: minutos o null. vencida: de un día anterior.
-// zombi: pospuesta 3+ veces; si por fin se termina, vale x1.5 (se acumula con jefe).
-function calcularPuntos(p: number, dur: number | null, vencida: boolean, zombi = false) {
-  const base = ({ 1: 40, 2: 25, 3: 15, 4: 10 } as Record<number, number>)[p] ?? 10;
-  const bono = dur ? Math.min(30, Math.round(dur / 5)) : 5;
-  const mult = (vencida ? 1.5 : 1) * (zombi ? 1.5 : 1);
-  return Math.max(1, Math.min(150, Math.round((base + bono) * mult)));
-}
-
-function puntosDe(t: any, zombi = false) {
-  const vencida = !!(t.due?.date && String(t.due.date).slice(0, 10) < hoyCR());
-  return { puntos: calcularPuntos(prioridadUI(t), duracionMin(t), vencida, zombi), vencida };
+// Los puntos de una misión los calcula el servidor (registrar_mision) con las reglas del
+// usuario; aquí solo se decide si la tarea está vencida (de un día anterior).
+function esVencida(t: any): boolean {
+  return !!(t.due?.date && String(t.due.date).slice(0, 10) < hoyCR());
 }
 
 // ── Contexto y tareas zombi (etapa 3) ─────────────────────
@@ -226,9 +217,6 @@ function misionDeEvento(ev: any, miId: string) {
   const ocurrencia = dueLocal ? (conHora ? dueLocal.slice(0, 19) : dueLocal.slice(0, 10)) : "sin-fecha";
 
   const prioridad = 5 - (Number(x.priority) || 1);
-  const cant = Number(x.duration) || 0;
-  const unidad = ex(x, "duration_unit", "durationUnit");
-  const dur = cant ? (unidad === "day" ? cant * 1440 : cant) : null;
   const diaEvento = fmtCR.format(new Date(ev.event_date));
   const vencida = ocurrencia !== "sin-fecha" && ocurrencia.slice(0, 10) < diaEvento;
 
@@ -239,7 +227,6 @@ function misionDeEvento(ev: any, miId: string) {
     proyecto_id: ev.parent_project_id ? String(ev.parent_project_id) : null,
     prioridad,
     vencida,
-    puntos: calcularPuntos(prioridad, dur, vencida),
     momento: String(ev.event_date),
     etiquetas: Array.isArray(x.labels) ? x.labels.map(String) : null,
   };
@@ -284,7 +271,6 @@ async function sincronizar(userId: string) {
         p_proyecto: m.proyecto_id ? nombres[m.proyecto_id] ?? null : null,
         p_prioridad: m.prioridad,
         p_vencida: m.vencida,
-        p_puntos: m.puntos,
         p_origen: "todoist",
         p_momento: m.momento,
         p_etiquetas: m.etiquetas,
@@ -543,7 +529,7 @@ Deno.serve(async (req) => {
       if (!t.due?.is_recurring) {
         try { zombi = (await leerComentarios(id)).zombi; } catch { /* sin bono */ }
       }
-      const { puntos, vencida } = puntosDe(t, zombi);
+      const vencida = esVencida(t);
       const ocurrencia = t.due?.date ?? "sin-fecha";
       let proyecto: string | null = null;
       try { proyecto = (await td(`/projects/${t.project_id}`))?.name ?? null; } catch { /* opcional */ }
@@ -559,7 +545,6 @@ Deno.serve(async (req) => {
         p_proyecto: proyecto,
         p_prioridad: prioridadUI(t),
         p_vencida: vencida,
-        p_puntos: puntos,
         p_zombi: zombi,
         p_etiquetas: Array.isArray(t.labels) ? t.labels : null,
         p_proyecto_id: t.project_id ? String(t.project_id) : null,
