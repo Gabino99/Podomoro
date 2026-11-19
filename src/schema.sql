@@ -1020,6 +1020,7 @@ REVOKE ALL ON FUNCTION public._reglas_defecto()            FROM PUBLIC, anon, au
 REVOKE ALL ON FUNCTION public._reglas_rangos()             FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public._reglas(UUID)                FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public._regla(UUID, TEXT)           FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public._retos(UUID)                 FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.reglas_juego()               FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.guardar_reglas(JSONB)        FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.reglas_juego()            TO authenticated;

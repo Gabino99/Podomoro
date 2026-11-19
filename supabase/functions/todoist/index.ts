@@ -17,7 +17,7 @@
 //    contexto  → { id, texto } guarda "🧠 Contexto: …" como comentario
 //    partir    → { id, pasos[] } crea subtareas para hoy
 //    soltar    → { id } p4 + 🗑️_Superflua + 30 días
-//    jefe      → { cambiar?, proyecto_id? } jefe de proyecto: vida y derrota (+200)
+//    jefe      → { cambiar?, proyecto_id? } jefe de proyecto: vida y derrota
 //    agenda    → próximos eventos de Google Calendar (secreto GOOGLE_ICS_URL)
 //    sync      → suma puntos por lo completado fuera de la app (app de
 //                Todoist, coach…). También la llama el cron cada 10 min
@@ -503,7 +503,7 @@ Deno.serve(async (req) => {
     }
 
     // Jefe de proyecto: un proyecto es el monstruo; su vida = tareas activas no repetitivas.
-    // { cambiar: true, proyecto_id? } elige otro. Si la vida llega a 0, el servidor da +200.
+    // { cambiar: true, proyecto_id? } elige otro. Si la vida llega a 0, el servidor da el premio de sus reglas.
     if (action === "jefe") return json(await jefeDeProyecto(user.id, body));
 
     // Próximos eventos de Google Calendar (para avisar si no le da tiempo).
@@ -523,7 +523,7 @@ Deno.serve(async (req) => {
       if (body.esperado && t.due?.date && body.esperado !== t.due.date) {
         return json({ ok: false, motivo: "ya_completada" });
       }
-      // Zombi (pospuesta 3+ veces): terminarla vale x1.5.
+      // Zombi (pospuesta 3+ veces): el servidor le da el bono de zombi de sus reglas.
       let zombi = false;
       // (No confiar en t.note_count: la API v1 lo devuelve en 0 aunque haya comentarios.)
       if (!t.due?.is_recurring) {

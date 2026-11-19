@@ -142,7 +142,8 @@ DO $$
 DECLARE u UUID := (SELECT u FROM _t); j JSON; v_ins TEXT[];
 BEGIN
   PERFORM public.guardar_reglas('{}'::jsonb);
-  ASSERT (SELECT array_agg(premio ORDER BY meta, id) FROM public._retos(u)) = ARRAY[5, 5, 5, 10],
+  -- orden por id: enfoque_25, jefe_1, misiones_3, misiones_6
+  ASSERT (SELECT array_agg(premio ORDER BY id) FROM public._retos(u)) = ARRAY[5, 5, 5, 10],
     '3a: premios de retos por defecto 5,5,5,10';
   PERFORM public.guardar_reglas('{"reto_misiones_3": 9}'::jsonb);
   ASSERT (SELECT premio FROM public._retos(u) WHERE id = 'misiones_3') = 9, '3a: reto_misiones_3 = 9';
