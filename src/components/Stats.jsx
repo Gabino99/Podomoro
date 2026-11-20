@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { CATEGORIAS } from '../lib/constants'
 import EstadisticasJuego from './EstadisticasJuego'
+import TiempoPorMision from './TiempoPorMision'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, AreaChart, Area, Cell,
@@ -336,6 +337,8 @@ export default function Stats({ userId, juego }) {
           </>
         )}
       </div>
+
+      <TiempoPorMision userId={userId} />
 
       {sesiones.length === 0 && (
         <p className="stats-empty">

@@ -239,6 +239,14 @@ export default function Timer({
       p_categoria: currentMode === 'work' ? categoria : 'descanso',
       p_nota:      nota.trim() || null,
     }
+    // Si hay una misión en foco, la sesión de trabajo queda ligada a ella.
+    const m = misionRef.current
+    if (currentMode === 'work' && m?.id) {
+      envio.p_task_id     = String(m.id)
+      envio.p_proyecto_id = m.proyecto_id ? String(m.proyecto_id) : null
+      envio.p_mision      = (m.contenido || '').slice(0, 200) || null
+      envio.p_proyecto    = m.proyecto || null
+    }
     // El servidor guarda la sesión y suma los puntos en un solo paso.
     let data
     try {
