@@ -19,6 +19,8 @@
 //    soltar    → { id } p4 + 🗑️_Superflua + 30 días
 //    jefe      → { cambiar?, proyecto_id? } jefe de proyecto: vida y derrota
 //    agenda    → próximos eventos de Google Calendar (secreto GOOGLE_ICS_URL)
+//    dia       → { fecha } agenda de un día: eventos del calendario + tareas de Todoist
+//    programar → { id, fecha, duracion? } pone hora (y duración) sin contar como pospuesta
 //    sync      → suma puntos por lo completado fuera de la app (app de
 //                Todoist, coach…). También la llama el cron cada 10 min
 //                con el encabezado x-cron-secret (ver supabase/cron_todoist.sql).
@@ -356,11 +358,12 @@ async function jefeDeProyecto(userId: string, body: any) {
 // calendarios (separadas por espacio o salto de línea). Solo lectura; nunca sale del servidor.
 const ICS_URLS = (Deno.env.get("GOOGLE_ICS_URL") ?? "").split(/\s+/).filter((u) => /^https:\/\//i.test(u));
 
-type Evento = { titulo: string; inicio: string; fin: string };
+type Evento = { titulo: string; inicio: string; fin: string; todoDia?: boolean };
 
 // Eventos con hora (no "todo el día") que se cruzan con [desde, hasta). Expande repeticiones,
 // respeta excepciones (instancias movidas o canceladas) y quita los que el usuario rechazó.
-function eventosDeIcs(texto: string, desde: Date, hasta: Date, correo: string): Evento[] {
+// Con `diaTodo` (YYYY-MM-DD) también incluye los eventos de "todo el día" que cubren ese día.
+function eventosDeIcs(texto: string, desde: Date, hasta: Date, correo: string, diaTodo = ""): Evento[] {
   const cal = new ICAL.Component(ICAL.parse(texto));
   for (const tz of cal.getAllSubcomponents("vtimezone")) {
     try { ICAL.TimezoneService.register(new ICAL.Timezone(tz)); } catch { /* ya registrada */ }
@@ -384,21 +387,35 @@ function eventosDeIcs(texto: string, desde: Date, hasta: Date, correo: string): 
     String(a.getParameter("partstat") ?? "").toUpperCase() === "DECLINED");
   const cancelado = (ev: any) => String(ev.component.getFirstPropertyValue("status") ?? "").toUpperCase() === "CANCELLED";
   const out: Evento[] = [];
+  const agregarTodoDia = (item: any, ini: any, fin: any) => {
+    if (!diaTodo || cancelado(item) || rechazado(item)) return;
+    const a = ini.toString().slice(0, 10);
+    const b = fin ? fin.toString().slice(0, 10) : a;
+    // La fecha final de un evento de todo el día es exclusiva.
+    if (a <= diaTodo && (b > diaTodo || b === a && a === diaTodo)) {
+      out.push({ titulo: String(item.summary || "(sin título)").slice(0, 120), inicio: `${diaTodo}T00:00:00-06:00`, fin: `${diaTodo}T23:59:59-06:00`, todoDia: true });
+    }
+  };
   const agregar = (item: any, ini: Date, fin: Date) => {
     if (item.startDate?.isDate || cancelado(item) || rechazado(item)) return;
     if (ini < hasta && fin > desde) out.push({ titulo: String(item.summary || "(sin título)").slice(0, 120), inicio: ini.toISOString(), fin: fin.toISOString() });
   };
 
   for (const ev of sueltos) {
-    if (!ev.startDate || ev.startDate.isDate) continue;
+    if (ev.startDate?.isDate) { agregarTodoDia(ev, ev.startDate, ev.endDate); continue; }
+    if (!ev.startDate) continue;
     const ini = ev.startDate.toJSDate();
     agregar(ev, ini, ev.endDate ? ev.endDate.toJSDate() : ini);
   }
   for (const ev of maestros.values()) {
-    if (ev.startDate.isDate) continue;
     const it = ev.iterator();
     for (let i = 0, n = it.next(); n && i < 20000; i++, n = it.next()) {
       const d = ev.getOccurrenceDetails(n);
+      if (ev.startDate.isDate) {
+        if (d.startDate.toString().slice(0, 10) > (diaTodo || "0")) break;
+        agregarTodoDia(d.item, d.startDate, d.endDate);
+        continue;
+      }
       const ini = d.startDate.toJSDate();
       if (ini >= hasta) break;
       agregar(d.item, ini, d.endDate.toJSDate());
@@ -423,6 +440,25 @@ async function agenda(horas = 18) {
     .filter((e) => { const k = e.titulo + e.inicio; if (vistos.has(k)) return false; vistos.add(k); return true; })
     .slice(0, 20);
   return { ok: true, configurado: true, eventos };
+}
+
+// Eventos de un día completo de Costa Rica (UTC-6, sin horario de verano), con los de todo el día.
+async function eventosDelDia(fecha: string): Promise<{ configurado: boolean; eventos: Evento[] }> {
+  if (!ICS_URLS.length) return { configurado: false, eventos: [] };
+  const desde = new Date(`${fecha}T00:00:00-06:00`);
+  const hasta = new Date(desde.getTime() + 24 * 3600e3);
+  const todos: Evento[] = [];
+  for (const url of ICS_URLS) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`No se pudo leer el calendario (${r.status}). Revise el secreto GOOGLE_ICS_URL.`);
+    todos.push(...eventosDeIcs(await r.text(), desde, hasta, ALLOWED_EMAIL, fecha));
+  }
+  const vistos = new Set<string>();
+  const eventos = todos
+    .sort((a, b) => a.inicio.localeCompare(b.inicio))
+    .filter((e) => { const k = e.titulo + e.inicio; if (vistos.has(k)) return false; vistos.add(k); return true; })
+    .slice(0, 60);
+  return { configurado: true, eventos };
 }
 
 // El cron no tiene sesión de usuario: se identifica con la clave guardada en Vault.
@@ -517,6 +553,30 @@ Deno.serve(async (req) => {
       catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     }
 
+    // Agenda de un día: eventos del calendario + tareas de Todoist (de hoy a +6 días).
+    if (action === "dia") {
+      const fecha = String(body.fecha ?? hoyCR());
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return json({ ok: false, error: "Fecha inválida." }, 400);
+      const esHoy = fecha === hoyCR();
+      const [tareas, proyectos, cal] = await Promise.all([
+        paginar("/tasks/filter", { query: esHoy ? "today | overdue" : "7 days" }),
+        paginar("/projects"),
+        eventosDelDia(fecha).then((r) => ({ ...r, error: null as string | null }))
+          .catch((e) => ({ configurado: true, eventos: [] as Evento[], error: (e as Error).message })),
+      ]);
+      const delDia = tareas
+        .filter((t) => !t.checked && t.due?.date)
+        .filter((t) => { const d = String(t.due.date).slice(0, 10); return d === fecha || (esHoy && d < fecha); });
+      return json({
+        ok: true,
+        hoy: hoyCR(),
+        fecha,
+        tareas: delDia.map(normalizar),
+        proyectos: proyectos.map((p) => ({ id: String(p.id), nombre: p.name })),
+        calendario: cal,
+      });
+    }
+
     if (action === "sync") return json(await sincronizar(user.id));
 
     if (!id) return json({ ok: false, error: "Falta el id de la tarea." }, 400);
@@ -588,6 +648,21 @@ Deno.serve(async (req) => {
       if (!t.due?.is_recurring) {
         try { await comentar(id, `${PREFIJO_REPROGRAMADA} desde FOCUS ${hoyCR()}`); } catch { /* opcional */ }
       }
+      return json({ ok: true });
+    }
+
+    // Bloque de tiempo: pone fecha y hora (y duración). No deja rastro de "pospuesta".
+    if (action === "programar") {
+      const fecha = String(body.fecha ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(fecha)) return json({ ok: false, error: "Fecha inválida." }, 400);
+      const dur = Math.round(Number(body.duracion) || 0);
+      const t = await td(`/tasks/${id}`);
+      const extra: Record<string, unknown> = {};
+      if (dur >= 5 && dur <= 720) {
+        if (t.due) extra.duration = { amount: dur, unit: "minute" };
+        else { extra.duration = dur; extra.duration_unit = "minute"; }
+      }
+      await moverFecha(t, fecha, extra);
       return json({ ok: true });
     }
 
