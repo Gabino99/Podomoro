@@ -5,6 +5,7 @@ import Timer from './components/Timer'
 import Store from './components/Store'
 import Stats from './components/Stats'
 import Misiones from './components/Misiones'
+import Agenda from './components/Agenda'
 import { useRecompensas } from './lib/useRecompensas'
 import { llamarTodoist } from './lib/todoist'
 import { useJuego } from './lib/useJuego'
@@ -155,6 +156,7 @@ export default function App() {
           <nav className="main-nav">
             {[
               { id: 'misiones', label: 'Misiones' },
+              { id: 'agenda', label: 'Agenda' },
               { id: 'timer', label: 'Temporizador' },
               { id: 'store', label: 'Recompensas'  },
               { id: 'stats', label: 'Estadísticas' },
@@ -192,6 +194,9 @@ export default function App() {
           <Misiones puntos={puntos} setPuntos={setPuntos} onEnfocar={enfocar}
             juego={juego} refrescarJuego={refrescarJuego} celebrar={celebrar} celebrarResultado={celebrarResultado} agenda={agenda} />
         )}
+        <div style={{ display: activeTab === 'agenda' ? 'contents' : 'none' }}>
+          <Agenda activo={activeTab === 'agenda'} onEnfocar={enfocar} onTerminar={terminarMision} />
+        </div>
         {/* El Temporizador nunca se desmonta: si termina mientras está en otra
             pestaña, la sesión igual se guarda y suma sus puntos. */}
         <div style={{ display: activeTab === 'timer' ? 'contents' : 'none' }}>
